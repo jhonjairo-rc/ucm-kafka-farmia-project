@@ -15,7 +15,6 @@ FarmIA está integrando sensores IoT en los campos agrícolas para monitorizar d
 ### Diagrama de Arquitectura Kafka
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
 graph TB
     subgraph "KRaft Controllers"
         C1[controller-1]
@@ -57,7 +56,6 @@ graph TB
 ### Diagrama de Flujo de Datos
 
 ```mermaid
-%%{init: {'theme': 'neutral'}}%%
 graph LR
     subgraph "Fuentes de Datos"
         DG1[Datagen: Sensores IoT]
