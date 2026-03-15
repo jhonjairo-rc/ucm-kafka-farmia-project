@@ -314,7 +314,7 @@ El fichero de configuración está en `connectors/source-datagen-sensor-telemetr
 
 ### Tarea 2: Integracion MySQL (MySQL → sales-transactions)
 
-**Objetivo:** Las transacciones se almacenan en una base de datos MySQL. El objetivo es llevar esos datos a Kafka para poder procesarlos en streaming en la Tarea 4.
+**Objetivo:** Las transacciones se almacenan en una base de datos MySQL. El objetivo es llevar esos datos a Kafka para poder procesarlos en streaming (en la Tarea 4).
 
 **Input:** tabla `sales_transactions` en MySQL con columnas `transaction_id`, `product_id`, `category`, `quantity`, `price`, `timestamp`.
 
@@ -328,6 +328,62 @@ La tabla `sales_transactions` no tiene datos estáticos. Se puebla automáticame
 2. **`sink-mysql-_transactions`**: lee del topic `_transactions` y escribe las filas en la tabla MySQL `sales_transactions`.
 
 Este circuito (Datagen → `_transactions` → MySQL) simula un sistema de ventas que genera transacciones continuamente, proporcionando datos frescos para que el JDBC Source los capture.
+
+```
+source-datagen-_transactions     sink-mysql-_transactions       source-mysql-sales_transactions
+        │                                │                                │
+        ▼                                ▼                                ▼
+   Genera datos ──→ _transactions ──→ MySQL(sales_transactions) ──→ sales-transactions
+   (topic auxiliar)                   (tabla real)                  (topic de negocio)
+```
+
+#### El topic `_transactions`
+
+El topic `_transactions` no se crea en el script `create-topics.sh` y no aparece en la descripción de la tarea. Sin embargo, es imprescindible para que el pipeline funcione.
+
+**¿Quién lo crea?** Se **autocrea** cuando el connector Datagen (`source-datagen-_transactions`) empieza a producir mensajes. Kafka tiene habilitado por defecto `auto.create.topics.enable=true`, de modo que cuando un producer escribe a un topic que no existe, Kafka lo crea sobre la marcha.
+
+Al autocrearse, usa la configuración por defecto del broker (1 partición, replication factor 1). Este topic solo sirve de puente entre el Datagen y el JDBC Sink que escribe en MySQL. No se consume en ksqlDB ni se procesa en ninguna tarea.
+
+#### Schema del topic `_transactions`
+
+El topic usa el schema Avro definido en `0.tarea/datagen/transactions.avsc`:
+
+```json
+{
+  "namespace": "com.farmia.sales",
+  "name": "SalesTransaction",
+  "type": "record",
+  "fields": [...]
+}
+```
+
+| Campo | Tipo | Generación |
+|---|---|---|
+| `transaction_id` | string | Regex `tx[1-9]{5}` → ej: `tx34521` |
+| `product_id` | string | Regex `prod_[1-9]{3}` → ej: `prod_472` |
+| `category` | string | Aleatorio entre: fertilizers, seeds, pesticides, equipment, supplies, soil |
+| `quantity` | int | Rango 1-10 |
+| `price` | float | Rango 10.00-200.00 |
+
+El connector Datagen lo referencia en su configuración:
+
+```json
+"schema.filename": "/home/appuser/transactions.avsc",
+"schema.keyfield": "transaction_id"
+```
+
+El fichero `.avsc` se copia al container `connect` durante el `setup.sh`:
+
+```bash
+docker cp ../0.tarea/datagen/transactions.avsc connect:/home/appuser/
+```
+
+#### ¿Por qué el schema no tiene campo `timestamp`?
+
+El schema Avro tiene **5 campos**, pero la tabla MySQL tiene **6 columnas** (incluye `timestamp`). El campo `timestamp` no viene del Datagen, sino que lo añade MySQL automáticamente con `DEFAULT CURRENT_TIMESTAMP` en el momento de la inserción. De esta forma, cada fila registra el instante exacto en que fue escrita en la base de datos.
+
+Este es el campo que después usa el JDBC Source Connector en modo `timestamp` para detectar filas nuevas.
 
 ### Aspectos relevantes de la Tabla MySQL
 
@@ -373,7 +429,7 @@ El fichero está en `0.tarea/connectors/source-mysql-sales_transactions.json`:
 | `table.whitelist` | `sales_transactions` | Lista de tablas a leer. |
 | `mode` | `timestamp` | Modo incremental que detecta filas nuevas por su `timestamp`. |
 | `timestamp.column.name` | `timestamp` | Columna `TIMESTAMP` de MySQL usada para detectar nuevos registros (tracking incremental). |
-| `topic.prefix` | `""` | Prefijo vacío — el nombre del topic se controla mediante la SMT `RegexRouter`. |
+| `topic.prefix` | `""` | Prefijo vacío, el nombre del topic se controla mediante la SMT `RegexRouter`. |
 | `poll.interval.ms` | `5000` | Cada 5 segundos el connector consulta MySQL buscando filas nuevas. |
 | `value.converter` | `io.confluent.connect.avro.AvroConverter` | Serializa en Avro antes de enviarse a Kafka. El schema se genera automáticamente a partir de la estructura de la tabla MySQL. |
 | `key.converter` | `org.apache.kafka.connect.storage.StringConverter` | La key se serializa como string plano. |
@@ -416,21 +472,49 @@ La SMT anterior (`ValueToKey`) produce una key como struct: `{"transaction_id": 
 "transforms.routeTopic.replacement": "sales-transactions"
 ```
 
-El JDBC Source Connector genera el nombre del topic como `topic.prefix + table_name`. Con `topic.prefix = ""` y tabla `sales_transactions`, el topic resultante sería `sales_transactions` (con guion bajo). El enunciado pide el topic `sales-transactions` (con guion). Esta SMT aplica una regex para renombrar el topic.
+El JDBC Source Connector genera el nombre del topic como `topic.prefix + table_name`. Con `topic.prefix = ""` y tabla `sales_transactions`, el topic resultante sería `sales_transactions` (con guion bajo). Con la tabla `sales_transactions` y cualquier prefijo, no se obtiene `sales-transactions` directamente. Esta SMT aplica una regex para renombrar el topic.
 
 
+La cadena de SMTs resuelve los tres problemas en secuencia:
 
+```
+Mensaje original de MySQL
+  key:   null
+  value: {transaction_id: "tx12345", product_id: "prod_001", category: "fertilizers", ...}
+  topic: "sales_transactions"
+         │
+         ▼
+  SMT 1: ValueToKey (createKey)
+  ─────────────────────────────
+  Copia el campo "transaction_id" del value al key.
 
-###
+  key:   {"transaction_id": "tx12345"}   ← struct, no string
+  value: {transaction_id: "tx12345", product_id: "prod_001", ...}
+  topic: "sales_transactions"
+         │
+         ▼
+  SMT 2: ExtractField$Key (extractString)
+  ────────────────────────────────────────
+  Extrae el valor del campo "transaction_id" del struct de la key,
+  convirtiendo la key en un string plano.
 
+  key:   "tx12345"                       ← string plano
+  value: {transaction_id: "tx12345", product_id: "prod_001", ...}
+  topic: "sales_transactions"
+         │
+         ▼
+  SMT 3: RegexRouter (routeTopic)
+  ───────────────────────────────
+  Aplica una regex al nombre del topic para renombrarlo.
+  sales_transactions → sales-transactions
 
-Conector: `source-mysql-sales_transactions`
-
-- Modo **incremental por timestamp** usando la columna `timestamp`
-- SMTs aplicadas:
-  - `ValueToKey`: extrae `transaction_id` como clave del mensaje
-  - `ExtractField$Key`: convierte la clave a String
-  - `RegexRouter`: renombra el topic de `sales_transactions` a `sales-transactions`
+  key:   "tx12345"
+  value: {transaction_id: "tx12345", product_id: "prod_001", ...}
+  topic: "sales-transactions"            ← nombre correcto
+         │
+         ▼
+  Mensaje publicado en Kafka ✓
+```
 
 ### Tarea 3: Procesamiento de Sensores (ksqlDB)
 

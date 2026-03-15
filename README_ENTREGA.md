@@ -502,6 +502,62 @@ La tabla `sales_transactions` no tiene datos estáticos. Se puebla automáticame
 
 Este circuito (Datagen → `_transactions` → MySQL) simula un sistema de ventas que genera transacciones continuamente, proporcionando datos frescos para que el JDBC Source los capture.
 
+```
+source-datagen-_transactions     sink-mysql-_transactions       source-mysql-sales_transactions
+        │                                │                                │
+        ▼                                ▼                                ▼
+   Genera datos ──→ _transactions ──→ MySQL(sales_transactions) ──→ sales-transactions
+   (topic auxiliar)                   (tabla real)                  (topic de negocio)
+```
+
+#### El topic `_transactions`
+
+El topic `_transactions` no se crea en el script `create-topics.sh` y no aparece en el enunciado de la tarea. Sin embargo, es imprescindible para que el pipeline funcione.
+
+**¿Quién lo crea?** Se **autocrea** cuando el connector Datagen (`source-datagen-_transactions`) empieza a producir mensajes. Kafka tiene habilitado por defecto `auto.create.topics.enable=true`, de modo que cuando un producer escribe a un topic que no existe, Kafka lo crea sobre la marcha.
+
+Al autocrearse, usa la configuración por defecto del broker (1 partición, replication factor 1). Para este topic es aceptable porque es un **topic interno/auxiliar** que solo sirve de puente entre el Datagen y el JDBC Sink que escribe en MySQL. No se consume en ksqlDB ni se procesa en ninguna tarea — es infraestructura proporcionada por el profesor.
+
+#### Schema del topic `_transactions`
+
+El topic usa el schema Avro definido en `0.tarea/datagen/transactions.avsc`:
+
+```json
+{
+  "namespace": "com.farmia.sales",
+  "name": "SalesTransaction",
+  "type": "record",
+  "fields": [...]
+}
+```
+
+| Campo | Tipo | Generación |
+|---|---|---|
+| `transaction_id` | string | Regex `tx[1-9]{5}` → ej: `tx34521` |
+| `product_id` | string | Regex `prod_[1-9]{3}` → ej: `prod_472` |
+| `category` | string | Aleatorio entre: fertilizers, seeds, pesticides, equipment, supplies, soil |
+| `quantity` | int | Rango 1-10 |
+| `price` | float | Rango 10.00-200.00 |
+
+El connector Datagen lo referencia en su configuración:
+
+```json
+"schema.filename": "/home/appuser/transactions.avsc",
+"schema.keyfield": "transaction_id"
+```
+
+El fichero `.avsc` se copia al container `connect` durante el `setup.sh`:
+
+```bash
+docker cp ../0.tarea/datagen/transactions.avsc connect:/home/appuser/
+```
+
+#### ¿Por qué el schema no tiene campo `timestamp`?
+
+Observa que el schema Avro tiene **5 campos**, pero la tabla MySQL tiene **6 columnas** (incluye `timestamp`). Esto es intencional: el campo `timestamp` no viene del Datagen, sino que lo añade MySQL automáticamente con `DEFAULT CURRENT_TIMESTAMP` en el momento de la inserción. De esta forma, cada fila registra el instante exacto en que fue escrita en la base de datos, no un timestamp sintético generado por Datagen.
+
+Este es precisamente el campo que después usa el JDBC Source Connector en modo `timestamp` para detectar filas nuevas.
+
 ### Diseño de la Tabla MySQL
 
 La tabla está definida en `0.tarea/sql/transactions.sql` (proporcionada, no se modifica):
