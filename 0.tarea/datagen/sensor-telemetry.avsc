@@ -3,6 +3,73 @@
   "name": "SensorTelemetry",
   "type": "record",
   "fields": [
-    ...
+    {
+      "name": "sensor_id",
+      "type": {
+        "type": "string",
+        "arg.properties": {
+          "options": [
+            "sensor_001",
+            "sensor_002",
+            "sensor_003",
+            "sensor_004",
+            "sensor_005",
+            "sensor_006",
+            "sensor_007",
+            "sensor_008",
+            "sensor_009",
+            "sensor_010"
+          ]
+        }
+      }
+    },
+    {
+      "name": "timestamp",
+      "type": {
+        "type": "long",
+        "arg.properties": {
+          "iteration": {
+            "start": 1767225600000,
+            "step": 1000
+          }
+        }
+      }
+    },
+    {
+      "name": "temperature",
+      "type": {
+        "type": "double",
+        "arg.properties": {
+          "range": {
+            "min": 15.0,
+            "max": 45.0
+          }
+        }
+      }
+    },
+    {
+      "name": "humidity",
+      "type": {
+        "type": "double",
+        "arg.properties": {
+          "range": {
+            "min": 10.0,
+            "max": 80.0
+          }
+        }
+      }
+    },
+    {
+      "name": "soil_fertility",
+      "type": {
+        "type": "double",
+        "arg.properties": {
+          "range": {
+            "min": 20.0,
+            "max": 100.0
+          }
+        }
+      }
+    }
   ]
 }
