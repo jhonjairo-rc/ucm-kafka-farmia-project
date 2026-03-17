@@ -6,7 +6,7 @@ FarmIA está integrando sensores IoT en los campos agrícolas para monitorizar d
 
 1. **Generar datos sinteticos** de sensores IoT usando Kafka Connect Datagen.
 2. **Integrar transacciones de ventas** desde MySQL usando Kafka Connect JDBC Source.
-3. **Detectar anomalias** en los sensores (temperatura > 35°C o humedad < 20%) con ksqlDB.
+3. **Detectar anomalías** en los sensores (temperatura > 35°C o humedad < 20%) con ksqlDB.
 4. **Agregar ventas por categoria** de producto en ventanas de 1 minuto con ksqlDB.
 5. **Persistir alertas** en MongoDB usando Kafka Connect MongoDB Sink.
 
@@ -16,43 +16,8 @@ FarmIA está integrando sensores IoT en los campos agrícolas para monitorizar d
 
 ![Logotipo](0.tarea/assets/farmia_project__data_flow.svg)
 
-## Estructura del Proyecto
 
-```
-ucm-farmia/
-├── 0.tarea/                          # Directorio principal de la tarea
-│   ├── connectors/                   # Configuraciones de Kafka Connect
-│   │   ├── source-datagen-_transactions.json       # (proporcionado) Genera transacciones
-│   │   ├── sink-mysql-_transactions.json            # (proporcionado) Escribe en MySQL
-│   │   ├── source-datagen-sensor-telemetry.json     # Tarea 1: Genera datos IoT
-│   │   ├── source-mysql-sales_transactions.json     # Tarea 2: Lee de MySQL
-│   │   └── sink-mongodb-sensor_alerts.json          # Tarea 5: Escribe alertas en MongoDB
-│   ├── datagen/                      # Schemas Avro para Datagen
-│   │   ├── sensor-telemetry.avsc     # Schema de datos de sensores IoT
-│   │   └── transactions.avsc        # Schema de transacciones (proporcionado)
-│   ├── ksqldb/                       # Queries ksqlDB
-│   │   ├── 01-sensor-alerts.sql      # Tarea 3: Deteccion de anomalias
-│   │   ├── 02-sales-summary.sql      # Tarea 4: Resumen de ventas por categoria
-│   │   └── run-ksqldb.sh            # Script para ejecutar todas las queries
-│   ├── sql/                          # DDL MySQL (NO MODIFICAR)
-│   │   └── transactions.sql
-│   ├── topics/                       # Creacion de topics
-│   │   └── create-topics.sh
-│   ├── validation/                   # Scripts de validacion
-│   │   └── validate.sh
-│   ├── setup.sh                      # Setup completo del entorno
-│   ├── start_connectors.sh           # Lanza todos los conectores
-│   └── shutdown.sh                   # Detiene el entorno
-├── 1.environment/                    # Infraestructura Docker
-│   ├── docker-compose.yaml
-│   ├── .env                          # TAG=7.8.0, CLUSTER_ID
-│   └── mysql/
-│       ├── init.sql                  # Inicializacion de MySQL
-│       └── mysql-connector-java-5.1.45.jar
-└── README.md
-```
-
-## Orden de Ejecucion
+## Ejecución Completa del Pipeline (Orden de Ejecucion)
 
 ### Paso 1: Levantar el entorno y preparar la infraestructura
 
@@ -99,7 +64,7 @@ Lanza los 5 conectores:
 | `source-mysql-sales_transactions` | JDBC Source | Lee `sales_transactions` de MySQL al topic `sales-transactions` |
 | `sink-mongodb-sensor_alerts` | MongoDB Sink | Escribe alertas de `sensor-alerts` a MongoDB |
 
-### Paso 4: Ejecutar las queries ksqlDB
+### Paso 4: Crear streams y tablas ksqlDB (ejecutar las queries ksqlDB)
 
 ```bash
 cd 0.tarea
@@ -117,13 +82,36 @@ Y ejecutar los ficheros SQL en orden:
 1. `ksqldb/01-sensor-alerts.sql` - Crea el stream de telemetria y el stream de alertas filtradas
 2. `ksqldb/02-sales-summary.sql` - Crea el stream de transacciones y la tabla de resumen por categoria
 
+### Paso 5: Validar el pipeline completo
+
+```bash
+cd 0.tarea
+./validation/validate.sh
+```
+
+Este script verifica:
+1. Topics creados y su configuración (particiones, RF)
+2. Estado de los 5 conectores (todos deben estar RUNNING)
+3. Mensajes en los topics de entrada y salida
+4. Streams, tables y queries en ksqlDB
+5. Documentos insertados en MongoDB
+
+### Paso 6: Parada del entorno
+
+```bash
+cd 0.tarea
+./shutdown.sh
+```
+
+> **Nota:** El estado de los contenedores no se persiste. Los datos y el estado del cluster se perderán al detener el entorno.
+
 ## Detalle de las Tareas
 
 ### Tarea 1: Generacion de Datos Sinteticos (Datagen → sensor-telemetry)
 
 **Objetivo:** configurar un source connector que genere eventos continuos en el topic `sensor-telemetry` con datos realistas de sensores (temperatura, humedad, fertilidad del suelo).
 
-**Output:** topic Kafka `sensor-telemetry` con mensajes serializados en Avro.
+> **Output:** topic Kafka `sensor-telemetry` con mensajes serializados en Avro.
 
 **¿Cómo genera datos?**
 
@@ -206,9 +194,8 @@ El fichero de configuración está en `connectors/source-datagen-sensor-telemetr
 
 **Objetivo:** Las transacciones se almacenan en una base de datos MySQL. El objetivo es llevar esos datos a Kafka para poder procesarlos en streaming (en la Tarea 4).
 
-**Input:** tabla `sales_transactions` en MySQL con columnas `transaction_id`, `product_id`, `category`, `quantity`, `price`, `timestamp`.
-
-**Output:** topic Kafka `sales-transactions` con los registros serializados en Avro.
+> **Input:** tabla `sales_transactions` en MySQL con columnas `transaction_id`, `product_id`, `category`, `quantity`, `price`, `timestamp`. \
+> **Output:** topic Kafka `sales-transactions` con los registros serializados en Avro.
 
 ### Cómo se puebla la tabla MySQL
 
@@ -406,111 +393,293 @@ Mensaje original de MySQL
   Mensaje publicado en Kafka ✓
 ```
 
-### Tarea 3: Procesamiento de Sensores (ksqlDB)
+### Tarea 3: Procesamiento de Sensores con ksqlDB
 
-Stream `sensor_alerts_stream` que filtra `sensor_telemetry_stream`:
-- **temperatura > 35°C** → alerta `HIGH_TEMPERATURE`
-- **humedad < 20%** → alerta `LOW_HUMIDITY`
-- **ambas condiciones** → alerta `HIGH_TEMPERATURE_AND_LOW_HUMIDITY`
+**Objetivo:** Los sensores IoT de FarmIA envían datos continuamente al topic `sensor-telemetry` (Tarea 1). Necesitamos un sistema que procese esta información en tiempo real y nos avise si detecta condiciones anormales que puedan afectar a los cultivos.
 
-Estructura de salida en `sensor-alerts`:
+**Reglas de anomalía:**
+- **HIGH_TEMPERATURE:** temperatura > 35 °C
+- **LOW_HUMIDITY:** humedad < 20 %
+
+> **Input:** topic `sensor-telemetry` (Avro) \
+> **Output:** topic `sensor-alerts` (Avro)
+
+**Formato de salida esperado:**
 ```json
 {
   "sensor_id": "sensor_001",
   "alert_type": "HIGH_TEMPERATURE",
-  "timestamp": 1673548200000,
+  "timestamp": 1767225600000,
   "details": "Temperature exceeded 35°C"
 }
 ```
 
-### Tarea 4: Resumen de Ventas (ksqlDB)
+### ¿Por qué ksqlDB?
 
-Tabla `sales_summary_table` con ventana tumbling de 1 minuto:
-- Agrupa por `category`
-- Calcula `total_quantity` (SUM) y `total_revenue` (SUM de quantity * price)
+Para las reglas de esta tarea (filtros con `WHERE` y agregaciones con `GROUP BY`), ksqlDB es la herramienta más directa. No se necesita  compilar código, crear JARs ni desplegar aplicaciones, todo se hace con sentencias SQL.
 
-Estructura de salida en `sales-summary`:
+### Queries de ksqlDB: Explicación Detallada
+
+Los ficheros SQL están en `0.tarea/ksqldb/01-sensor-alerts.sql`.
+
+#### Statement 1: Crear el STREAM de entrada
+
+```sql
+CREATE STREAM IF NOT EXISTS sensor_telemetry_stream (
+    sensor_id      VARCHAR KEY,
+    `timestamp`    BIGINT,
+    temperature    DOUBLE,
+    humidity       DOUBLE,
+    soil_fertility DOUBLE
+) WITH (
+    KAFKA_TOPIC  = 'sensor-telemetry',
+    VALUE_FORMAT = 'AVRO'
+);
+```
+
+**¿Qué hace?** Define una abstracción de streaming sobre el topic sensor-telemetry. No mueve datos ni crea nada nuevo, simplemente le indica a ksqlDB cómo debe interpretar los mensajes que llegan a ese topic.
+
+**Nota:**
+
+- **STREAM** vs **TABLE**
+  - **STREAM  (El flujo de eventos):** Representa el historial completo de lo que ha sucedido. Es inmutable y cada dato es un evento nuevo.
+  - **TABLE (El estado actual):** Representa el estado actual o una "foto" de los datos. Es mutable (los valores se actualizan según su clave).
+  - **En nuestro contexto:** Un STREAM es una secuencia inmutable de eventos (append-only). Cada lectura de sensor es un evento nuevo, no una actualización de uno anterior. Por eso usamos STREAM y no TABLE.
+- **`` `timestamp` ``** (con backticks): `timestamp` es una palabra reservada en ksqlDB (se utiliza para referirse al ROWTIME del mensaje). Al usar backticks, evitamos ese conflicto y dejamos claro que nos referimos a nuestro propio campo dentro del schema, no al ROWTIME.
+
+#### Statement 2: Crear el STREAM de alertas (CSAS)
+
+```sql
+CREATE STREAM IF NOT EXISTS sensor_alerts_stream
+WITH (
+    KAFKA_TOPIC  = 'sensor-alerts',
+    VALUE_FORMAT = 'AVRO',
+    PARTITIONS   = 3,
+    REPLICAS      = 3
+) AS
+SELECT
+    sensor_id,
+    CASE
+        WHEN temperature > 35 AND humidity < 20 THEN 'HIGH_TEMPERATURE_AND_LOW_HUMIDITY'
+        WHEN temperature > 35 THEN 'HIGH_TEMPERATURE'
+        WHEN humidity < 20 THEN 'LOW_HUMIDITY'
+    END AS alert_type,
+    `timestamp`,
+    CASE
+        WHEN temperature > 35 AND humidity < 20 THEN 'Temperature exceeded 35°C and humidity below 20%'
+        WHEN temperature > 35 THEN 'Temperature exceeded 35°C'
+        WHEN humidity < 20 THEN 'Humidity below 20%'
+    END AS details
+FROM sensor_telemetry_stream
+WHERE temperature > 35 OR humidity < 20
+EMIT CHANGES;
+```
+
+**¿Qué hace?** Crea una **query persistente** es decir, una transformación que se ejecuta continuamente en background. Cada vez que llega un nuevo mensaje a `sensor_telemetry_stream` que cumple la condición (`temperature > 35` o `humidity < 20`), se genera una alerta y se escribe en el topic `sensor-alerts`.
+
+**Nota:**
+
+- **CSAS (CREATE STREAM AS SELECT)**: Es la forma que tiene ksqlDB de definir pipelines de procesamiento continuo. A diferencia de un `SELECT` normal (que devuelve resultados y termina), un CSAS:
+  - Crea un nuevo topic en Kafka (`sensor-alerts`)
+  - Despliega una query persistente que se ejecuta indefinidamente
+  - Genera un nuevo mensaje en el topic de destino por cada evento que cumple la condición
+- **`EMIT CHANGES`**: Es obligatorio en queries sobre streams en ksqlDB. Indica que los resultados se emiten en tiempo real conforme llegan nuevos eventos.
+
+### Tarea 4: Procesamiento de Ventas con ksqlDB
+
+**Objetivo:** Las transacciones de ventas de FarmIA se envían al topic `sales-transactions` desde MySQL (Tarea 2). A partir de estos datos, el negocio necesita tener una visión en tiempo real de los ingresos por categoría de producto. 
+
+Para cubrir esta necesidad, se agrupan las ventas en ventanas de 1 minuto, se calculan los totales por categoría y publican estos resúmenes en tiempo real.
+
+> **Input:** topic `sales-transactions` (Avro) \
+> **Output:** topic `sales-summary` (Avro)
+
+**Formato de salida esperado:**
 ```json
 {
   "category": "fertilizers",
   "total_quantity": 20,
   "total_revenue": 1000.0,
-  "window_start": 1673548200000,
-  "window_end": 1673548260000
+  "window_start": 1767225600000,
+  "window_end": 1767225660000
 }
 ```
 
-### Tarea 5: Integracion MongoDB (sensor-alerts → MongoDB)
+### Conceptos Clave: Windowed Aggregations
 
-Conector: `sink-mongodb-sensor_alerts`
+#### 1. Tumbling Window
 
-- Lee del topic `sensor-alerts`
-- Escribe en la coleccion `sensor_alerts` de la base de datos `course` en MongoDB
+Una Tumbling Window (ventana de salto o fija) es una técnica de procesamiento de datos en tiempo real que divide un flujo continuo en intervalos de tiempo fijos, contiguos y sin superposición. Cada evento pertenece exclusivamente a una sola ventana, lo que permite agrupar datos de forma ordenada, como sumar ventas cada 5 minutos.
 
-## Comandos de Validacion
+#### 2. STREAM vs TABLE en contexto de agregación
 
-### Validacion automatizada
+Cuando haces un `GROUP BY` en ksqlDB, el resultado siempre es una **TABLE**, no un STREAM. Esto se debe a que una agregación necesita mantener estado: por ejemplo, el total de ventas de "fertilizers" entre las 12:00 y las 12:01 se va actualizando a medida que llegan nuevas ventas en ese intervalo.
 
-```bash
-cd 0.tarea
-./validation/validate.sh
+### Queries de ksqlDB: Explicación Detallada
+
+Los ficheros SQL están en `0.tarea/ksqldb/02-sales-summary.sql`.
+
+#### Statement 1: Crear el STREAM de entrada
+
+```sql
+CREATE STREAM IF NOT EXISTS sales_transactions_stream (
+    transaction_id VARCHAR KEY,
+    product_id     VARCHAR,
+    category       VARCHAR,
+    quantity       INT,
+    price          DOUBLE,
+    `timestamp`    BIGINT
+) WITH (
+    KAFKA_TOPIC  = 'sales-transactions',
+    VALUE_FORMAT = 'AVRO'
+);
 ```
 
-### Validacion manual
+**Puntos importantes:**
 
-**Verificar topics:**
+- **`transaction_id VARCHAR KEY`**: es la clave del mensaje, y la establecen las SMTs del conector JDBC (Tarea 2).
+
+- **`VALUE_FORMAT = 'AVRO'`**: los datos llegan desde el conector JDBC, que los serializa en formato Avro usando Schema Registry.
+
+- **`` `timestamp` ``** (con backticks): igual que en la Tarea 3, se escapa porque es una palabra reservada.
+
+#### Statement 2: Tabla agregada con TUMBLING WINDOW
+
+```sql
+CREATE TABLE IF NOT EXISTS sales_summary_table
+WITH (
+    KAFKA_TOPIC  = 'sales-summary',
+    VALUE_FORMAT = 'AVRO',
+    PARTITIONS   = 3,
+    REPLICAS     = 3
+) AS
+SELECT
+    category,
+    SUM(quantity)          AS total_quantity,
+    SUM(quantity * price)  AS total_revenue,
+    WINDOWSTART            AS window_start,
+    WINDOWEND              AS window_end
+FROM sales_transactions_stream
+    WINDOW TUMBLING (SIZE 1 MINUTE)
+GROUP BY category
+EMIT CHANGES;
+```
+
+**¿Qué hace?** Crea una query persistente que:
+1. Lee los datos del stream `sales_transactions_stream`
+2. Agrupa los eventos por `category` en ventanas de 1 minuto
+3. Calcula, para cada grupo, la cantidad total y el revenue acumulado
+4. Publica el resultado en el topic `sales-summary`
+
+**Conceptos clave:**
+
+- **`WINDOW TUMBLING (SIZE 1 MINUTE)`**: define ventanas fijas de 1 minuto que no se solapan. Cada evento se asigna a su ventana en función del ROWTIME.
+
+- **`SUM(quantity * price) AS total_revenue`**: calcula el ingreso total sumando (cantidad × precio unitario) dentro de cada ventana y categoría.
+
+- **`WINDOWSTART` / `WINDOWEND`**: son columnas que genera automáticamente ksqlDB y que indican el inicio y fin de cada ventana en epoch millis. No hace falta declararlas.
+
+- **`GROUP BY category`**: agrupa los datos por categoría de producto. Las posibles categorías son: fertilizers, seeds, pesticides, equipment, supplies y soil (definidas en el schema `transactions.avsc`).
+
+### Tarea 5: Integracion de MongoDB (sensor-alerts → MongoDB)
+
+**Objetivo:** Las alertas de anomalías que genera ksqlDB (Tarea 3) se envían al topic `sensor-alerts`. Por lo que necesitamos persistir estas anomalías en una base de datos. MongoDB encaja muy bien aquí, ya que permite almacenar los datos como documentos sin necesidad de definir un esquema rígido desde el principio.
+
+> **Input:** topic `sensor-alerts` (Avro, producido por ksqlDB en la Tarea 3) \
+> **Output:** colección `sensor_alerts` en MongoDB (base de datos `farmia`)
+
+### Configuración del MongoDB Sink Connector
+
+El fichero está en `0.tarea/connectors/sink-mongodb-sensor_alerts.json`:
+
+```json
+{
+  "name": "sink-mongodb-sensor_alerts",
+  "config": {
+    "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+    "tasks.max": "1",
+    "topics": "sensor-alerts",
+    "connection.uri": "mongodb://admin:secret123@mongodb:27017",
+    "database": "farmia",
+    "collection": "sensor_alerts",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}
+```
+
+#### Desglose de propiedades
+
+| Propiedad | Valor | Explicación |
+|---|---|---|
+| `connector.class` | `MongoSinkConnector` | Connector oficial de MongoDB para Kafka. Instalado durante el `setup.sh`. |
+| `connection.uri` | `mongodb://admin:secret123@mongodb:27017` | URI de conexión a MongoDB. |
+| `database` | `farmia` | Base de datos destino. Se crea automáticamente si no existe. |
+| `collection` | `sensor_alerts` | Colección destino. También se crea automáticamente. |
+| `topics` | `sensor-alerts` | Topic de Kafka a consumir. |
+| `key.converter` | `StringConverter` | La key del mensaje es un string (el `sensor_id`). |
+| `value.converter` | `AvroConverter` | Las alertas fueron escritas en Avro por ksqlDB (Tarea 3), así que usamos AvroConverter para deserializarlas. |
+| `value.converter.schema.registry.url` | `http://schema-registry:8081` | URL del Schema Registry para resolver el schema Avro de las alertas. |
+
+**¿Por qué AvroConverter y no JsonConverter?** Porque en la Tarea 3 se configuró el stream de alertas con `VALUE_FORMAT = 'AVRO'`. El converter del sink debe coincidir con el formato en que se escribieron los datos en el topic.
+
+---
+
+## Comandos Útiles
+
 ```bash
+# ────── Docker ──────
+cd 1.environment
+docker compose up -d                              # Levantar todo
+docker compose down --remove-orphans              # Parar todo
+docker compose down -v                            # Reset completo (borra datos)
+docker compose logs connect -f                    # Logs de Connect en tiempo real
+
+# ────── Topics ──────
 docker exec broker-1 kafka-topics --list --bootstrap-server broker-1:29092
-docker exec broker-1 kafka-topics --describe --bootstrap-server broker-1:29092 --topic sensor-telemetry
-```
+docker exec broker-1 kafka-topics --describe --topic sensor-telemetry --bootstrap-server broker-1:29092
 
-**Verificar conectores:**
-```bash
+# ────── Consumir mensajes ──────
+# Formato plano (Avro = bytes ilegibles)
+docker exec broker-1 kafka-console-consumer \
+  --bootstrap-server broker-1:29092 \
+  --topic sensor-telemetry \
+  --from-beginning --max-messages 5
+
+# Formato deserializado (Avro → JSON legible)
+docker exec schema-registry kafka-avro-console-consumer \
+  --bootstrap-server broker-1:29092 \
+  --topic sensor-telemetry \
+  --from-beginning --max-messages 5 \
+  --property schema.registry.url=http://schema-registry:8081
+
+# ────── Schema Registry ──────
+curl -s http://localhost:8081/subjects | jq
+curl -s http://localhost:8081/subjects/sensor-telemetry-value/versions/latest | jq
+
+# ────── Kafka Connect ──────
 curl -s http://localhost:8083/connectors | jq
 curl -s http://localhost:8083/connectors/source-datagen-sensor-telemetry/status | jq
 curl -s http://localhost:8083/connectors/source-mysql-sales_transactions/status | jq
 curl -s http://localhost:8083/connectors/sink-mongodb-sensor_alerts/status | jq
-```
 
-**Verificar mensajes en topics:**
-```bash
-docker exec broker-1 kafka-console-consumer --bootstrap-server broker-1:29092 --topic sensor-telemetry --from-beginning --max-messages 5
-docker exec broker-1 kafka-console-consumer --bootstrap-server broker-1:29092 --topic sales-transactions --from-beginning --max-messages 5
-docker exec broker-1 kafka-console-consumer --bootstrap-server broker-1:29092 --topic sensor-alerts --from-beginning --max-messages 5
-docker exec broker-1 kafka-console-consumer --bootstrap-server broker-1:29092 --topic sales-summary --from-beginning --max-messages 5
-```
-
-**Verificar queries ksqlDB:**
-```bash
+# ────── ksqlDB ──────
 docker exec -it ksqldb-cli ksql http://ksqldb-server:8088
-```
-```sql
-SHOW STREAMS;
-SHOW TABLES;
-SHOW QUERIES;
-SELECT * FROM sensor_alerts_stream EMIT CHANGES LIMIT 5;
-SELECT * FROM sales_summary_table EMIT CHANGES LIMIT 5;
-```
 
-**Verificar datos en MongoDB:**
-```bash
-docker exec mongodb mongosh --username admin --password secret123 --authenticationDatabase admin --eval "db = db.getSiblingDB('course'); db.sensor_alerts.countDocuments(); db.sensor_alerts.find().sort({_id:-1}).limit(5).pretty();"
-```
+# ────── MySQL ──────
+docker exec -it mysql mysql --user=root --password=password --database=db
 
-## URLs de los Servicios
+# ────── MongoDB ──────
+docker exec -it mongodb mongosh --username admin --password secret123 --authenticationDatabase admin
 
-| Servicio | URL |
-|---|---|
-| Control Center | http://localhost:9021 |
-| Schema Registry | http://localhost:8081 |
-| Kafka Connect REST | http://localhost:8083 |
-| ksqlDB | http://localhost:8088 |
-
-## Parada del Entorno
-
-```bash
-cd 0.tarea
-./shutdown.sh
+# ────── URLs de servicios ──────
+# Control Center:   http://localhost:9021
+# Schema Registry:  http://localhost:8081
+# Kafka Connect:    http://localhost:8083
+# ksqlDB:           http://localhost:8088
 ```
 
-> **Nota:** El estado de los contenedores no se persiste. Los datos y el estado del cluster se perderan al detener el entorno.
+
+
+

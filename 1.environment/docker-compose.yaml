@@ -294,5 +294,5 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: secret123
-      MONGO_INITDB_DATABASE: course
+      MONGO_INITDB_DATABASE: farmia
     command: [ "--quiet", "--logpath", "/dev/null" ]

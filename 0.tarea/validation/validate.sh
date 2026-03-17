@@ -91,7 +91,7 @@ docker exec mongodb mongosh \
   --password secret123 \
   --authenticationDatabase admin \
   --quiet \
-  --eval "db = db.getSiblingDB('course'); print('Documentos en sensor_alerts: ' + db.sensor_alerts.countDocuments()); printjson(db.sensor_alerts.find().sort({_id:-1}).limit(3).toArray());"
+  --eval "db = db.getSiblingDB('farmia'); print('Documentos en sensor_alerts: ' + db.sensor_alerts.countDocuments()); printjson(db.sensor_alerts.find().sort({_id:-1}).limit(3).toArray());"
 
 echo ""
 echo "========================================"
