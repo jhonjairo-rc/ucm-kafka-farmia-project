@@ -52,15 +52,15 @@ docker exec broker-1 kafka-topics --create \
   --if-not-exists
 
 echo ""
-echo "Verificando topics creados..."
-docker exec broker-1 kafka-topics --list --bootstrap-server $BROKER
-
-echo ""
 echo "Detalle de los topics:"
 for topic in sensor-telemetry sales-transactions sensor-alerts sales-summary; do
   echo "--- $topic ---"
   docker exec broker-1 kafka-topics --describe --bootstrap-server $BROKER --topic $topic
   echo ""
 done
+
+echo ""
+echo "Verificando topics creados..."
+docker exec broker-1 kafka-topics --list --bootstrap-server $BROKER
 
 echo "OK"

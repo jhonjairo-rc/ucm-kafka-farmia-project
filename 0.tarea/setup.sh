@@ -4,7 +4,13 @@ cd ../1.environment
 
 echo "Iniciando entorno"
 docker compose up -d
-sleep 30
+
+echo "Esperando a que MySQL esté listo..."
+until docker exec mysql mysql --user=root --password=password --database=db -e "SELECT 1" > /dev/null 2>&1; do
+  sleep 5
+  echo "  MySQL no está listo, reintentando..."
+done
+echo "MySQL listo"
 
 echo "Creando la tabla transactions"
 docker cp ../0.tarea/sql/transactions.sql mysql:/

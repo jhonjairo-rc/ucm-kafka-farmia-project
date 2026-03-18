@@ -1,12 +1,8 @@
 -- ============================================================
 -- Tarea 4: Procesamiento en Tiempo Real de transacciones de ventas
--- Agrega ventas por categoria de producto en ventanas de 1 minuto
 -- ============================================================
 
 -- 1. Crear STREAM sobre el topic sales-transactions
---    El JDBC Source produce al topic "sales-transactions" (por el prefix "sales-" + tabla "transactions")
---    Nota: la tabla real en MySQL es sales_transactions, pero el topic.prefix + table = sales-sales_transactions
---    Ajustamos al topic real que produce el conector JDBC
 CREATE STREAM IF NOT EXISTS sales_transactions_stream (
   transaction_id VARCHAR KEY,
   product_id VARCHAR,

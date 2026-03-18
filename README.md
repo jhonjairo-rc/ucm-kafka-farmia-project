@@ -5,10 +5,10 @@
 FarmIA está integrando sensores IoT en los campos agrícolas para monitorizar datos como temperatura, humedad y fertilidad del suelo. También recopila datos en tiempo real sobre las transacciones de su plataforma de ventas en línea y quiere procesarlos para generar insights en tiempo real. La meta es construir un pipeline que procese estos datos de streaming y los transforme en información útil para la toma de decisiones y análisis. Este proyecto construye un pipeline de streaming completo usando el ecosistema Apache Kafka para:
 
 1. **Generar datos sinteticos** de sensores IoT usando Kafka Connect Datagen.
-2. **Integrar transacciones de ventas** desde MySQL usando Kafka Connect JDBC Source.
+2. **Integrar las transacciones de ventas** desde MySQL usando Kafka Connect JDBC Source.
 3. **Detectar anomalías** en los sensores (temperatura > 35°C o humedad < 20%) con ksqlDB.
-4. **Agregar ventas por categoria** de producto en ventanas de 1 minuto con ksqlDB.
-5. **Persistir alertas** en MongoDB usando Kafka Connect MongoDB Sink.
+4. **Agregar las ventas por categoria** en ventanas de 1 minuto con ksqlDB.
+5. **Guardar las alertas** en MongoDB usando Kafka Connect MongoDB Sink.
 
 ## Arquitectura
 
@@ -26,13 +26,13 @@ cd 0.tarea
 ./setup.sh
 ```
 
-Este script:
-- Inicia todos los contenedores Docker (brokers, connect, ksqlDB, MySQL, MongoDB...)
+Este script se encarga de dejar todo listo para empezar a trabajar. En concreto:
+- Levanta todos los contenedores Docker (brokers, Connect, ksqlDB, MySQL, MongoDB, etc.)
 - Crea la tabla `sales_transactions` en MySQL
-- Instala los plugins de conectores (Datagen, JDBC, MongoDB, transform-common)
+- Instala los plugins necesarios de los conectores (Datagen, JDBC, MongoDB, transform-common)
 - Copia el driver JDBC de MySQL al contenedor de Connect
 - Copia los schemas Avro al contenedor de Connect
-- Reinicia Connect para cargar los plugins
+- Reinicia Connect para que cargue correctamente los plugins
 
 ### Paso 2: Crear los topics de Kafka
 
@@ -109,16 +109,16 @@ cd 0.tarea
 
 ### Tarea 1: Generacion de Datos Sinteticos (Datagen → sensor-telemetry)
 
-**Objetivo:** configurar un source connector que genere eventos continuos en el topic `sensor-telemetry` con datos realistas de sensores (temperatura, humedad, fertilidad del suelo).
+**Objetivo:** configurar un source connector que genere eventos de forma continua en el topic `sensor-telemetry` simulando datos realistas de sensores (temperatura, humedad, fertilidad del suelo).
 
 > **Output:** topic Kafka `sensor-telemetry` con mensajes serializados en Avro.
 
-**¿Cómo genera datos?**
+**¿Cómo se generan los datos?**
 
-Datagen lee un schema Avro que incluye anotaciones especiales en `arg.properties`. Estas anotaciones le dicen al connector cómo generar el valor de cada campo:
-- `options`: elige aleatoriamente de una lista de valores fijos
-- `range`: genera un número aleatorio entre `min` y `max`
-- `iteration`: genera valores incrementales con un `start` y un `step`
+Datagen utiliza un schema Avro que incluye algunas anotaciones especiales en `arg.properties`. Estas anotaciones le indican al conector cómo debe generar el valor de cada campo:
+- `options`: elige aleatoriamente entre una lista de valores definidos
+- `range`: genera un número aleatorio dentro de un rango (`min` y `max`)
+- `iteration`: genera valores incrementales a partir de un `start` y un `step`
 
 **Conector:** `source-datagen-sensor-telemetry`
 
@@ -148,9 +148,9 @@ Schema Avro: `datagen/sensor-telemetry.avsc`
 
 El campo `iteration` genera timestamps incrementales (cada segundo), simulando lecturas periódicas del sensor. El `start` corresponde al 1 de enero de 2026.
 
-**4. `soil_fertility` como campo informativo**
+**4. `soil_fertility`**
 
-No se definen reglas de anomalía para este campo. Se mantiene disponible con un rango (20-100).
+No se definen reglas de anomalía para este campo.
 
 ### Configuración del Connector
 
@@ -178,16 +178,16 @@ El fichero de configuración está en `connectors/source-datagen-sensor-telemetr
 
 | Propiedad | Valor | Explicación |
 |---|---|---|
-| `connector.class` | `DatagenConnector` | Clase Java del connector. Kafka Connect la carga desde el plugin path. |
+| `connector.class` | `DatagenConnector` | Clase Java del conector. Kafka Connect la utiliza para cargar el conector desde el plugin correspondiente. |
 | `kafka.topic` | `sensor-telemetry` | Topic destino donde se publican los eventos generados. |
-| `schema.filename` | `/home/appuser/sensor-telemetry.avsc` | Ruta al schema Avro **dentro del container**. En el fichero `0.tarea/setup.sh` se copia a esta ruta. |
-| `schema.keyfield` | `sensor_id` | Campo del schema que se usa como message key. Esto asegura que eventos del mismo sensor van a la misma partición (ordenamiento por sensor). |
-| `max.interval` | `1000` | Intervalo máximo en ms entre mensajes. Con valor 1000, genera ~1 msg/segundo. |
-| `iterations` | `10000000` | Número total de mensajes (eventos) a generar. |
-| `tasks.max` | `1` | Un solo task es suficiente para un lab. En producción se usarían más para paralelismo. |
-| `value.converter` | `io.confluent.connect.avro.AvroConverter` | El value se serializa en Avro antes de enviarse a Kafka. |
-| `value.converter.schema.registry.url` | `http://schema-registry:8081` | URL interna del Schema Registry (dentro de la red Docker). |
-| `key.converter` | `org.apache.kafka.connect.storage.StringConverter` | La key se serializa como string plano (el `sensor_id`). |
+| `schema.filename` | `/home/appuser/sensor-telemetry.avsc` | Ruta al schema Avro dentro del contenedor. Este archivo se copia ahí durante la ejecución del script de setup. |
+| `schema.keyfield` | `sensor_id` | Campo del schema que se usa como clave del mensaje. Esto permite que los eventos del mismo sensor vayan a la misma partición (manteniendo el orden por sensor). |
+| `max.interval` | `1000` | Intervalo máximo, en milisegundos, entre mensajes. Con un valor de 1000, se genera aproximadamente 1 mensaje por segundo. |
+| `iterations` | `10000000` | Número total de mensajes (eventos) que se generarán. |
+| `tasks.max` | `1` | Número máximo de tareas del conector. |
+| `value.converter` | `io.confluent.connect.avro.AvroConverter` | Define cómo se serializa el valor del mensaje. En este caso, se utiliza Avro antes de enviarlo a Kafka. |
+| `value.converter.schema.registry.url` | `http://schema-registry:8081` | URL interna del Schema Registry dentro de la red de Docker, donde se registran y consultan los schemas Avro. |
+| `key.converter` | `org.apache.kafka.connect.storage.StringConverter` | Define cómo se serializa la clave del mensaje. Aquí se utiliza un string plano (el `sensor_id`). |
 
 
 ### Tarea 2: Integracion MySQL (MySQL → sales-transactions)
@@ -199,28 +199,22 @@ El fichero de configuración está en `connectors/source-datagen-sensor-telemetr
 
 ### Cómo se puebla la tabla MySQL
 
-La tabla `sales_transactions` no tiene datos estáticos. Se puebla automáticamente mediante dos connectors proporcionados:
+La tabla `sales_transactions` no tiene datos estáticos, sino que se va llenando automáticamente mediante dos conectores:
 
-1. **`source-datagen-_transactions`**: genera transacciones sintéticas con el schema `transactions.avsc` y las publica en el topic `_transactions`.
-2. **`sink-mysql-_transactions`**: lee del topic `_transactions` y escribe las filas en la tabla MySQL `sales_transactions`.
+1. **`source-datagen-_transactions`**: genera transacciones sintéticas a partir del schema `transactions.avsc` y las publica en el topic `_transactions`.
+2. **`sink-mysql-_transactions`**: consume esos datos del topic `_transactions` y los inserta en la tabla `sales_transactions` en MySQL.
 
-Este circuito (Datagen → `_transactions` → MySQL) simula un sistema de ventas que genera transacciones continuamente, proporcionando datos frescos para que el JDBC Source los capture.
-
-```
-source-datagen-_transactions     sink-mysql-_transactions       source-mysql-sales_transactions
-        │                                │                                │
-        ▼                                ▼                                ▼
-   Genera datos ──→ _transactions ──→ MySQL(sales_transactions) ──→ sales-transactions
-   (topic auxiliar)                   (tabla real)                  (topic de negocio)
-```
+En conjunto, este flujo (Datagen → `_transactions` → MySQL) simula un sistema de ventas que está generando datos continuamente, lo que permite tener información actualizada para que el JDBC Source pueda capturarla.
 
 #### El topic `_transactions`
 
-El topic `_transactions` no se crea en el script `create-topics.sh` y no aparece en la descripción de la tarea. Sin embargo, es imprescindible para que el pipeline funcione.
+El topic `_transactions` no se crea en el script `create-topics.sh` ni se menciona explícitamente en la descripción de la tarea. Aun así, es una pieza clave para que todo el pipeline funcione correctamente.
 
-**¿Quién lo crea?** Se **autocrea** cuando el connector Datagen (`source-datagen-_transactions`) empieza a producir mensajes. Kafka tiene habilitado por defecto `auto.create.topics.enable=true`, de modo que cuando un producer escribe a un topic que no existe, Kafka lo crea sobre la marcha.
+**¿Quién lo crea?** Se crea automáticamente cuando el conector Datagen (`source-datagen-_transactions`) empieza a producir mensajes. Esto es posible porque Kafka tiene activada por defecto la opción `auto.create.topics.enable=true`. Es decir, si un producer escribe en un topic que aún no existe, Kafka lo crea en ese momento.
 
-Al autocrearse, usa la configuración por defecto del broker (1 partición, replication factor 1). Este topic solo sirve de puente entre el Datagen y el JDBC Sink que escribe en MySQL. No se consume en ksqlDB ni se procesa en ninguna tarea.
+Al crearse de esta forma, utiliza la configuración por defecto del broker (1 partición y replication factor 1).
+
+Este topic actúa simplemente como puente entre Datagen y el conector JDBC Sink que inserta los datos en MySQL. No se utiliza en ksqlDB ni forma parte de ningún otro procesamiento dentro del pipeline.
 
 #### Schema del topic `_transactions`
 
@@ -243,29 +237,33 @@ El topic usa el schema Avro definido en `0.tarea/datagen/transactions.avsc`:
 | `quantity` | int | Rango 1-10 |
 | `price` | float | Rango 10.00-200.00 |
 
-El connector Datagen lo referencia en su configuración:
+El connector Datagen `source-datagen-_transactions` lo referencia en su configuración:
 
 ```json
 "schema.filename": "/home/appuser/transactions.avsc",
 "schema.keyfield": "transaction_id"
 ```
 
-El fichero `.avsc` se copia al container `connect` durante el `setup.sh`:
+El fichero `.avsc` se copia al contenedor `connect` durante el `setup.sh`:
 
 ```bash
 docker cp ../0.tarea/datagen/transactions.avsc connect:/home/appuser/
 ```
 
-#### ¿Por qué el schema no tiene campo `timestamp`?
+#### ¿Por qué el schema no tiene el campo `timestamp`?
 
-El schema Avro tiene **5 campos**, pero la tabla MySQL tiene **6 columnas** (incluye `timestamp`). El campo `timestamp` no viene del Datagen, sino que lo añade MySQL automáticamente con `DEFAULT CURRENT_TIMESTAMP` en el momento de la inserción. De esta forma, cada fila registra el instante exacto en que fue escrita en la base de datos.
+El schema Avro define **5 campos**, mientras que la tabla en MySQL tiene **6 columnas** (incluyendo `timestamp`). Esto se debe a que el campo `timestamp` no lo genera Datagen, sino que lo añade automáticamente MySQL al insertar cada fila, usando `DEFAULT CURRENT_TIMESTAMP`.
 
-Este es el campo que después usa el JDBC Source Connector en modo `timestamp` para detectar filas nuevas.
+De esta forma, cada registro guarda el momento exacto en el que se escribió en la base de datos.
 
-### Aspectos relevantes de la Tabla MySQL
+Este campo es el que luego utiliza el JDBC Source Connector en modo `timestamp` para identificar y capturar las nuevas filas.
 
-- **`timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP`**: MySQL asigna automáticamente la fecha/hora de inserción. Esta columna es la que usa el JDBC connector en modo incremental.
-- **PRIMARY KEY compuesta** (`transaction_id`, `timestamp`): permite múltiples registros del mismo `transaction_id` si tienen diferentes timestamps.
+### Diseño de la Tabla MySQL
+
+### Aspectos a destacar de la tabla `sales_transactions`
+
+- **`timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP`**: MySQL asigna automáticamente la fecha y hora en el momento de la inserción. Esta columna es la que utiliza el conector JDBC en modo incremental para detectar nuevos registros.
+- **PRIMARY KEY compuesta** (`transaction_id`, `timestamp`): permite que un mismo transaction_id aparezca varias veces, siempre que tenga distintos timestamps.
 
 ### Configuración del JDBC Source Connector
 
@@ -286,7 +284,9 @@ El fichero está en `0.tarea/connectors/source-mysql-sales_transactions.json`:
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
-    "transforms": "createKey,extractString,routeTopic",
+    "transforms": "castPrice,createKey,extractString,routeTopic",
+    "transforms.castPrice.type": "org.apache.kafka.connect.transforms.Cast$Value",
+    "transforms.castPrice.spec": "price:float64",
     "transforms.createKey.type": "org.apache.kafka.connect.transforms.ValueToKey",
     "transforms.createKey.fields": "transaction_id",
     "transforms.extractString.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
@@ -304,7 +304,7 @@ El fichero está en `0.tarea/connectors/source-mysql-sales_transactions.json`:
 |---|---|---|
 | `connection.url` | `jdbc:mysql://mysql:3306/db?...` | URL JDBC al container MySQL. `mysql` es el hostname en la red Docker. |
 | `table.whitelist` | `sales_transactions` | Lista de tablas a leer. |
-| `mode` | `timestamp` | Modo incremental que detecta filas nuevas por su `timestamp`. |
+| `mode` | `timestamp` | Modo incremental que detecta filas nuevas comparando el valor de la columna `timestamp` con el último valor procesado. |
 | `timestamp.column.name` | `timestamp` | Columna `TIMESTAMP` de MySQL usada para detectar nuevos registros (tracking incremental). |
 | `topic.prefix` | `""` | Prefijo vacío, el nombre del topic se controla mediante la SMT `RegexRouter`. |
 | `poll.interval.ms` | `5000` | Cada 5 segundos el connector consulta MySQL buscando filas nuevas. |
@@ -313,9 +313,9 @@ El fichero está en `0.tarea/connectors/source-mysql-sales_transactions.json`:
 
 ### SMTs (Single Message Transforms)
 
-Las SMTs son transformaciones ligeras que se aplican a cada mensaje **(dentro del connector)**, antes de que se publique en Kafka. No requieren código, se configuran declarativamente en el JSON.
+Las SMTs son pequeñas transformaciones que se aplican a cada mensaje dentro del conector, justo antes de enviarlo a Kafka. No hace falta escribir código: se configuran directamente en el JSON del connector.
 
-Usamos 3 SMTs encadenadas (se ejecutan en el orden declarado en `"transforms"`):
+En este caso, utilizamos 3 SMTs encadenadas, que se ejecutan en el orden en el que aparecen en la propiedad `transforms`:
 
 ```
 MySQL Row → [createKey] → [extractString] → [routeTopic] → Kafka
@@ -328,9 +328,10 @@ MySQL Row → [createKey] → [extractString] → [routeTopic] → Kafka
 "transforms.createKey.fields": "transaction_id"
 ```
 
-El JDBC Source Connector por defecto envia mensajes con key = null. Esta SMT copia el campo `transaction_id` del value al key del mensaje. Tener una key es esencial porque:
-- Permite particionar por `transaction_id` (mensajes del mismo ID siempre van a la misma partición)
-- ksqlDB necesita la key para crear streams con columnas KEY
+Por defecto, el JDBC Source Connector envía los mensajes sin clave (key = null). Esta SMT copia el campo `transaction_id` del value al key del mensaje. Tener una clave es importante porque:
+
+- Permite particionar por `transaction_id` (los mensajes con el mismo ID van siempre a la misma partición)
+- ksqlDB necesita una key para poder definir streams con columnas `KEY`
 
 **SMT 2: `extractString` (ExtractField$Key)**
 
@@ -339,7 +340,7 @@ El JDBC Source Connector por defecto envia mensajes con key = null. Esta SMT cop
 "transforms.extractString.field": "transaction_id"
 ```
 
-La SMT anterior (`ValueToKey`) produce una key como struct: `{"transaction_id": "tx12345"}`. Esta SMT extrae el valor del campo para obtener un string plano: `"tx12345"`. Esto es necesario porque el `key.converter` es `StringConverter`, que espera un string simple, no un struct.
+Después de aplicar `ValueToKey`, la clave queda en formato struct, algo así como: `{"transaction_id": "tx12345"}`. Esta SMT extrae únicamente el valor del campo para dejar una key simple: `"tx12345"`. Esto es necesario porque el `key.converter` está configurado como `StringConverter`, que espera un string plano, no un struct.
 
 **SMT 3: `routeTopic` (RegexRouter)**
 
@@ -349,8 +350,7 @@ La SMT anterior (`ValueToKey`) produce una key como struct: `{"transaction_id": 
 "transforms.routeTopic.replacement": "sales-transactions"
 ```
 
-El JDBC Source Connector genera el nombre del topic como `topic.prefix + table_name`. Con `topic.prefix = ""` y tabla `sales_transactions`, el topic resultante sería `sales_transactions` (con guion bajo). Con la tabla `sales_transactions` y cualquier prefijo, no se obtiene `sales-transactions` directamente. Esta SMT aplica una regex para renombrar el topic.
-
+El JDBC Source Connector genera el nombre del topic combinando `topic.prefix + table_name`. Con `topic.prefix = ""` y tabla `sales_transactions`, el resultado sería `sales_transactions` (con guion bajo). Con la tabla `sales_transactions` y cualquier prefijo, no se obtiene `sales-transactions` directamente. Esta SMT aplica una regex para renombrar el topic.
 
 La cadena de SMTs resuelve los tres problemas en secuencia:
 
@@ -395,7 +395,7 @@ Mensaje original de MySQL
 
 ### Tarea 3: Procesamiento de Sensores con ksqlDB
 
-**Objetivo:** Los sensores IoT de FarmIA envían datos continuamente al topic `sensor-telemetry` (Tarea 1). Necesitamos un sistema que procese esta información en tiempo real y nos avise si detecta condiciones anormales que puedan afectar a los cultivos.
+**Objetivo:** Los sensores IoT de FarmIA envían datos de forma continua al topic `sensor-telemetry` (Tarea 1). A partir de ahí, necesitamos procesar esa información en tiempo real y detectar posibles anomalías que puedan afectar a los cultivos. 
 
 **Reglas de anomalía:**
 - **HIGH_TEMPERATURE:** temperatura > 35 °C
@@ -416,9 +416,9 @@ Mensaje original de MySQL
 
 ### ¿Por qué ksqlDB?
 
-Para las reglas de esta tarea (filtros con `WHERE` y agregaciones con `GROUP BY`), ksqlDB es la herramienta más directa. No se necesita  compilar código, crear JARs ni desplegar aplicaciones, todo se hace con sentencias SQL.
+Para este caso, donde básicamente necesitamos aplicar filtros (`WHERE`) y algunas agregaciones (`GROUP BY`), ksqlDB es una opción muy práctica. Permite trabajar directamente con SQL, sin tener que compilar código, generar JARs ni desplegar aplicaciones adicionales.
 
-### Queries de ksqlDB: Explicación Detallada
+### Queries de ksqlDB
 
 Los ficheros SQL están en `0.tarea/ksqldb/01-sensor-alerts.sql`.
 
@@ -437,7 +437,7 @@ CREATE STREAM IF NOT EXISTS sensor_telemetry_stream (
 );
 ```
 
-**¿Qué hace?** Define una abstracción de streaming sobre el topic sensor-telemetry. No mueve datos ni crea nada nuevo, simplemente le indica a ksqlDB cómo debe interpretar los mensajes que llegan a ese topic.
+**¿Qué hace?** Define un stream sobre el topic `sensor-telemetry`. No mueve datos ni crea nada nuevo; simplemente le indica a ksqlDB cómo debe interpretar los mensajes que llegan a ese topic. 
 
 **Nota:**
 
@@ -445,7 +445,7 @@ CREATE STREAM IF NOT EXISTS sensor_telemetry_stream (
   - **STREAM  (El flujo de eventos):** Representa el historial completo de lo que ha sucedido. Es inmutable y cada dato es un evento nuevo.
   - **TABLE (El estado actual):** Representa el estado actual o una "foto" de los datos. Es mutable (los valores se actualizan según su clave).
   - **En nuestro contexto:** Un STREAM es una secuencia inmutable de eventos (append-only). Cada lectura de sensor es un evento nuevo, no una actualización de uno anterior. Por eso usamos STREAM y no TABLE.
-- **`` `timestamp` ``** (con backticks): `timestamp` es una palabra reservada en ksqlDB (se utiliza para referirse al ROWTIME del mensaje). Al usar backticks, evitamos ese conflicto y dejamos claro que nos referimos a nuestro propio campo dentro del schema, no al ROWTIME.
+- **`` `timestamp` ``** (con backticks): `timestamp` es una palabra reservada en ksqlDB, ya que se utiliza para referirse al `ROWTIME` del mensaje. Al escribirlo entre backticks, evitamos ese conflicto y dejamos claro que nos estamos refiriendo a nuestro propio campo dentro del schema, y no al `ROWTIME`. 
 
 #### Statement 2: Crear el STREAM de alertas (CSAS)
 
@@ -475,13 +475,13 @@ WHERE temperature > 35 OR humidity < 20
 EMIT CHANGES;
 ```
 
-**¿Qué hace?** Crea una **query persistente** es decir, una transformación que se ejecuta continuamente en background. Cada vez que llega un nuevo mensaje a `sensor_telemetry_stream` que cumple la condición (`temperature > 35` o `humidity < 20`), se genera una alerta y se escribe en el topic `sensor-alerts`.
+**¿Qué hace?** Crea una *query persistente*, es decir, una transformación que se ejecuta continuamente en background. Cada vez que llega un nuevo mensaje a `sensor_telemetry_stream` que cumple la condición (`temperature > 35` o `humidity < 20`), se genera una alerta y se escribe en el topic `sensor-alerts`.
 
 **Nota:**
 
 - **CSAS (CREATE STREAM AS SELECT)**: Es la forma que tiene ksqlDB de definir pipelines de procesamiento continuo. A diferencia de un `SELECT` normal (que devuelve resultados y termina), un CSAS:
   - Crea un nuevo topic en Kafka (`sensor-alerts`)
-  - Despliega una query persistente que se ejecuta indefinidamente
+  - Lanza una query persistente que se ejecuta indefinidamente
   - Genera un nuevo mensaje en el topic de destino por cada evento que cumple la condición
 - **`EMIT CHANGES`**: Es obligatorio en queries sobre streams en ksqlDB. Indica que los resultados se emiten en tiempo real conforme llegan nuevos eventos.
 
@@ -489,7 +489,7 @@ EMIT CHANGES;
 
 **Objetivo:** Las transacciones de ventas de FarmIA se envían al topic `sales-transactions` desde MySQL (Tarea 2). A partir de estos datos, el negocio necesita tener una visión en tiempo real de los ingresos por categoría de producto. 
 
-Para cubrir esta necesidad, se agrupan las ventas en ventanas de 1 minuto, se calculan los totales por categoría y publican estos resúmenes en tiempo real.
+Para conseguirlo, se agrupan las ventas en ventanas de 1 minuto, se calculan los totales por categoría y publican estos resúmenes en tiempo real.
 
 > **Input:** topic `sales-transactions` (Avro) \
 > **Output:** topic `sales-summary` (Avro)
@@ -515,7 +515,7 @@ Una Tumbling Window (ventana de salto o fija) es una técnica de procesamiento d
 
 Cuando haces un `GROUP BY` en ksqlDB, el resultado siempre es una **TABLE**, no un STREAM. Esto se debe a que una agregación necesita mantener estado: por ejemplo, el total de ventas de "fertilizers" entre las 12:00 y las 12:01 se va actualizando a medida que llegan nuevas ventas en ese intervalo.
 
-### Queries de ksqlDB: Explicación Detallada
+### Queries de ksqlDB:
 
 Los ficheros SQL están en `0.tarea/ksqldb/02-sales-summary.sql`.
 
@@ -583,7 +583,9 @@ EMIT CHANGES;
 
 ### Tarea 5: Integracion de MongoDB (sensor-alerts → MongoDB)
 
-**Objetivo:** Las alertas de anomalías que genera ksqlDB (Tarea 3) se envían al topic `sensor-alerts`. Por lo que necesitamos persistir estas anomalías en una base de datos. MongoDB encaja muy bien aquí, ya que permite almacenar los datos como documentos sin necesidad de definir un esquema rígido desde el principio.
+**Objetivo:** Las alertas de anomalías que genera ksqlDB (Tarea 3) se envían al topic `sensor-alerts`. A partir de ahí, necesitamos almacenarlas en una base de datos para poder consultarlas, analizarlas con el tiempo y utilizarlas en dashboards.
+
+MongoDB es una buena opción en este caso, ya que permite guardar los datos como documentos sin necesidad de definir un esquema rígido desde el principio.
 
 > **Input:** topic `sensor-alerts` (Avro, producido por ksqlDB en la Tarea 3) \
 > **Output:** colección `sensor_alerts` en MongoDB (base de datos `farmia`)
@@ -622,7 +624,37 @@ El fichero está en `0.tarea/connectors/sink-mongodb-sensor_alerts.json`:
 | `value.converter` | `AvroConverter` | Las alertas fueron escritas en Avro por ksqlDB (Tarea 3), así que usamos AvroConverter para deserializarlas. |
 | `value.converter.schema.registry.url` | `http://schema-registry:8081` | URL del Schema Registry para resolver el schema Avro de las alertas. |
 
-**¿Por qué AvroConverter y no JsonConverter?** Porque en la Tarea 3 se configuró el stream de alertas con `VALUE_FORMAT = 'AVRO'`. El converter del sink debe coincidir con el formato en que se escribieron los datos en el topic.
+---
+
+## Problemas Detectados
+
+Durante las pruebas del pipeline apareció un problema importante relacionado con la visualización de los datos. Esto obligó a ajustar la configuración del conector JDBC Source. A continuación se describe qué pasaba, por qué ocurría y cómo se solucionó.
+
+### Problema: campo `price` ilegible en el topic `sales-transactions`
+
+**Síntoma:** Al revisar los mensajes del topic `sales-transactions` en Confluent Control Center, el campo `price` mostraba caracteres extraños en lugar de valores numéricos:
+
+```
+{"transaction_id":"tx99122", ..., "price":"\u0018♦", ...}
+{"transaction_id":"tx41116", ..., "price":"\u0013♦", ...}
+{"transaction_id":"tx72133", ..., "price":"@>", ...}
+```
+
+El **origen del problema**, es la incompatibilidad de tipos entre MySQL y el mapeo automático de Avro.
+
+La clave está en que el JDBC Source Connector genera su propio esquema Avro a partir de la tabla en MySQL. Es decir, no reutiliza el esquema del Datagen (`transactions.avsc`). Por eso, aunque en Datagen el campo `price` se define como `float`, el conector JDBC lee un `DECIMAL(10,2)` desde MySQL y lo serializa como `bytes`.
+
+
+**Solución aplicada: SMT `Cast$Value`**
+
+Para solucionarlo, se añadió una nueva SMT al inicio de la cadena de transformaciones del conector:
+
+```json
+"transforms.castPrice.type": "org.apache.kafka.connect.transforms.Cast$Value",
+"transforms.castPrice.spec": "price:float64"
+```
+
+Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado como bytes) a `float64` (equivalente a double en Avro) antes de que se serialice. De esta forma, los valores pasan a ser numéricos y se pueden leer correctamente.
 
 ---
 

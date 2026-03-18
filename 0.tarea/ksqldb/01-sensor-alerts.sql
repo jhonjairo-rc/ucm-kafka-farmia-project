@@ -1,6 +1,5 @@
 -- ============================================================
 -- Tarea 3: Procesamiento en Tiempo Real de sensores
--- Detecta condiciones anomalas y publica alertas en sensor-alerts
 -- ============================================================
 
 -- 1. Crear STREAM sobre el topic sensor-telemetry
@@ -16,8 +15,6 @@ CREATE STREAM IF NOT EXISTS sensor_telemetry_stream (
 );
 
 -- 2. Crear STREAM de alertas que filtra condiciones anomalas
---    - temperatura > 35 °C  => HIGH_TEMPERATURE
---    - humedad < 20 %       => LOW_HUMIDITY
 CREATE STREAM IF NOT EXISTS sensor_alerts_stream
 WITH (
   KAFKA_TOPIC = 'sensor-alerts',

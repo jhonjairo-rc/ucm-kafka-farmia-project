@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Script de validacion del proyecto FarmIA
-# Ejecutar una vez que todo el pipeline este en marcha
 
 echo "========================================"
 echo "  VALIDACION DEL PROYECTO FARMIA"

@@ -43,7 +43,11 @@ Asignatura: Kafka y Procesamiento en Tiempo Real
    - [Configuración del MongoDB Sink Connector](#configuración-del-mongodb-sink-connector)
    - [Verificación y Validación](#verificación-y-validación-4)
 10. [Ejecución Completa del Pipeline](#ejecución-completa-del-pipeline)
-11. [Comandos Útiles](#comandos-útiles)
+11. [Problemas Detectados y Soluciones](#problemas-detectados-y-soluciones)
+    - [Problema: campo `price` ilegible en el topic `sales-transactions`](#problema-campo-price-ilegible-en-el-topic-sales-transactions)
+    - [Ficheros modificados](#ficheros-modificados)
+    - [Procedimiento de aplicación del fix](#procedimiento-de-aplicación-del-fix)
+12. [Comandos Útiles](#comandos-útiles)
 
 ---
 
@@ -598,7 +602,9 @@ El fichero está en `0.tarea/connectors/source-mysql-sales_transactions.json`:
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
     "key.converter": "org.apache.kafka.connect.storage.StringConverter",
-    "transforms": "createKey,extractString,routeTopic",
+    "transforms": "castPrice,createKey,extractString,routeTopic",
+    "transforms.castPrice.type": "org.apache.kafka.connect.transforms.Cast$Value",
+    "transforms.castPrice.spec": "price:float64",
     "transforms.createKey.type": "org.apache.kafka.connect.transforms.ValueToKey",
     "transforms.createKey.fields": "transaction_id",
     "transforms.extractString.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
@@ -652,13 +658,45 @@ El connector en modo `timestamp` detecta filas nuevas comparando el valor de la 
 
 Las SMTs son transformaciones ligeras que se aplican a cada mensaje **dentro del connector**, antes de que se publique en Kafka. No requieren código — se configuran declarativamente en el JSON.
 
-Usamos 3 SMTs encadenadas (se ejecutan en el orden declarado en `"transforms"`):
+Usamos 4 SMTs encadenadas (se ejecutan en el orden declarado en `"transforms"`):
 
 ```
-MySQL Row → [createKey] → [extractString] → [routeTopic] → Kafka
+MySQL Row → [castPrice] → [createKey] → [extractString] → [routeTopic] → Kafka
 ```
 
-**SMT 1: `createKey` (ValueToKey)**
+**SMT 1: `castPrice` (Cast$Value) — Conversión de tipo DECIMAL a double**
+
+```json
+"transforms.castPrice.type": "org.apache.kafka.connect.transforms.Cast$Value",
+"transforms.castPrice.spec": "price:float64"
+```
+
+Esta SMT resuelve un problema de incompatibilidad de tipos entre MySQL y Avro. La columna `price` en MySQL está definida como `DECIMAL(10,2)`. Cuando el JDBC Source Connector lee este tipo, el mapeo por defecto a Avro es:
+
+```
+MySQL DECIMAL(10,2) → Avro bytes con logicalType "decimal" (precisión 10, escala 2)
+```
+
+El tipo Avro `bytes` con logical type `decimal` almacena el valor como una secuencia de bytes en complemento a dos, no como un número legible. Esto provoca que al visualizar los mensajes en Control Center (o cualquier consumidor que no implemente la decodificación del logical type `decimal`), el campo `price` se muestre como **caracteres ilegibles** en lugar de un número.
+
+**¿Por qué ocurre esto?** El flujo completo de datos es:
+
+```
+1. Datagen genera price como float (Avro)     → topic _transactions
+2. JDBC Sink escribe float en MySQL DECIMAL    → MySQL convierte sin problema (float → DECIMAL)
+3. JDBC Source lee MySQL DECIMAL               → serializa como Avro bytes (logicalType: decimal)
+4. En el topic sales-transactions              → price aparece como bytes ilegibles
+```
+
+La discrepancia está en el paso 3: el JDBC Source genera el schema Avro a partir de los tipos de MySQL (no del schema Avro original del Datagen). MySQL `DECIMAL(10,2)` se mapea a `bytes`, no a `float` ni `double`.
+
+**¿Por qué no funciona `numeric.mapping=best_fit`?** La propiedad `numeric.mapping=best_fit` del JDBC Source Connector solo convierte `DECIMAL` a `int`/`long` cuando la escala es 0 (es decir, sin decimales). Para `DECIMAL(10,2)` con escala 2, `best_fit` sigue mapeando a `bytes`. Por eso es necesario el SMT `Cast$Value`.
+
+**Resultado:** con esta SMT, el campo `price` se convierte de `DECIMAL` (bytes) a `float64` (double en Avro) **antes** de la serialización, produciendo valores numéricos legibles como `104.21`, `87.59`, etc.
+
+> **Nota:** Esta SMT debe ser la **primera** en la cadena (antes de `createKey`), ya que opera sobre el value del mensaje y necesita acceder al campo `price` antes de cualquier otra transformación.
+
+**SMT 2: `createKey` (ValueToKey)**
 
 ```json
 "transforms.createKey.type": "org.apache.kafka.connect.transforms.ValueToKey",
@@ -669,7 +707,7 @@ El JDBC Source Connector por defecto no produce message keys (la key es null). E
 - Permite particionar por `transaction_id` (mensajes del mismo ID siempre van a la misma partición)
 - ksqlDB necesita la key para crear streams con columnas KEY
 
-**SMT 2: `extractString` (ExtractField$Key)**
+**SMT 3: `extractString` (ExtractField$Key)**
 
 ```json
 "transforms.extractString.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
@@ -678,7 +716,7 @@ El JDBC Source Connector por defecto no produce message keys (la key es null). E
 
 La SMT anterior (`ValueToKey`) produce una key como struct: `{"transaction_id": "tx12345"}`. Esta SMT extrae el valor del campo para obtener un string plano: `"tx12345"`. Esto es necesario porque el `key.converter` es `StringConverter`, que espera un string simple, no un struct.
 
-**SMT 3: `routeTopic` (RegexRouter)**
+**SMT 4: `routeTopic` (RegexRouter)**
 
 ```json
 "transforms.routeTopic.type": "org.apache.kafka.connect.transforms.RegexRouter",
@@ -1279,6 +1317,140 @@ cd 0.tarea
 ```
 
 > **Nota:** El estado de los contenedores no se persiste. Los datos y el estado del cluster se perderán al detener el entorno.
+
+---
+
+## Problemas Detectados y Soluciones
+
+Durante la fase de testing del pipeline se detectó un problema crítico de visualización de datos que requirió cambios en la configuración del conector JDBC Source. A continuación se documenta el problema, su análisis y la solución aplicada.
+
+### Problema: campo `price` ilegible en el topic `sales-transactions`
+
+**Síntoma:** al inspeccionar los mensajes del topic `sales-transactions` en Confluent Control Center, el campo `price` mostraba caracteres ilegibles en lugar de valores numéricos:
+
+```
+{"transaction_id":"tx99122", ..., "price":"\u0018♦", ...}
+{"transaction_id":"tx41116", ..., "price":"\u0013♦", ...}
+{"transaction_id":"tx72133", ..., "price":"@>", ...}
+```
+
+**Causa raíz:** incompatibilidad de tipos entre MySQL y el mapeo automático de Avro.
+
+El flujo de datos que genera este problema es:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  1. Datagen (transactions.avsc)                                     │
+│     price: float (Avro)              → topic: _transactions         │
+│                                                                      │
+│  2. JDBC Sink (_transactions → MySQL)                               │
+│     float → DECIMAL(10,2)            → MySQL lo convierte OK        │
+│                                                                      │
+│  3. JDBC Source (MySQL → sales-transactions)   ← AQUÍ ESTÁ EL BUG  │
+│     DECIMAL(10,2) → bytes (logicalType: decimal)                    │
+│     El JDBC Source NO usa el schema Avro del Datagen.               │
+│     Genera un schema NUEVO a partir de los tipos de MySQL.          │
+│     MySQL DECIMAL(10,2) se mapea a Avro "bytes" + logicalType       │
+│     "decimal" (precisión 10, escala 2).                             │
+│                                                                      │
+│  4. Control Center muestra los bytes crudos → caracteres ilegibles  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**El punto clave** es que el JDBC Source Connector genera su propio schema Avro a partir de la estructura de la tabla MySQL. No reutiliza el schema del Datagen (`transactions.avsc`). Por tanto, aunque el Datagen define `price` como `float`, el JDBC Source lee un `DECIMAL(10,2)` de MySQL y lo serializa como `bytes`.
+
+El tipo Avro `bytes` con logical type `decimal` codifica el valor numérico como una secuencia de bytes en complemento a dos. Por ejemplo, el valor `104.21` se almacena como los bytes `0x28B5` (10421 en complemento a dos, con escala 2). Estos bytes no son legibles como texto.
+
+**Schema registrado antes del fix:**
+
+```json
+{
+  "name": "price",
+  "type": {
+    "type": "bytes",
+    "scale": 2,
+    "precision": 10,
+    "logicalType": "decimal"
+  }
+}
+```
+
+**Solución descartada: `numeric.mapping=best_fit`**
+
+El JDBC Source Connector tiene una propiedad `numeric.mapping` que controla cómo se mapean los tipos numéricos de SQL a Avro:
+
+| Valor | Comportamiento para DECIMAL(10,2) |
+|---|---|
+| `none` (default) | `bytes` + logicalType `decimal` |
+| `best_fit` | Solo convierte a `int`/`long` si **escala = 0**. Para escala > 0, sigue usando `bytes` |
+
+Como `DECIMAL(10,2)` tiene escala 2, `best_fit` **no resuelve el problema**.
+
+**Solución aplicada: SMT `Cast$Value`**
+
+Se añadió una nueva SMT al principio de la cadena de transformaciones del conector:
+
+```json
+"transforms.castPrice.type": "org.apache.kafka.connect.transforms.Cast$Value",
+"transforms.castPrice.spec": "price:float64"
+```
+
+Esta SMT convierte el campo `price` de `DECIMAL` (bytes) a `float64` (double en Avro) **antes de la serialización**, produciendo valores numéricos legibles.
+
+**Schema registrado después del fix:**
+
+```json
+{
+  "name": "price",
+  "type": "double"
+}
+```
+
+**Resultado verificado con `kafka-avro-console-consumer`:**
+
+```json
+{"transaction_id":"tx95183","product_id":"prod_543","category":"soil","quantity":5,"price":104.21,"timestamp":1773762811000}
+{"transaction_id":"tx11191","product_id":"prod_651","category":"fertilizers","quantity":1,"price":123.59,"timestamp":1773762812000}
+{"transaction_id":"tx92558","product_id":"prod_514","category":"equipment","quantity":5,"price":26.68,"timestamp":1773762812000}
+```
+
+### Ficheros modificados
+
+| Fichero | Cambio | Motivo |
+|---|---|---|
+| `0.tarea/connectors/source-mysql-sales_transactions.json` | Añadida SMT `castPrice` (`Cast$Value` con spec `price:float64`) al inicio de la cadena de transforms | Convertir `DECIMAL(10,2)` → `double` para que `price` sea un número legible en Avro |
+
+### Procedimiento de aplicación del fix
+
+Si el conector ya ha publicado mensajes con el schema anterior (`bytes`/`decimal`), el fix requiere limpiar el estado previo para que el nuevo schema (`double`) se registre correctamente:
+
+```bash
+# 1. Eliminar el conector
+curl -X DELETE http://localhost:8083/connectors/source-mysql-sales_transactions
+
+# 2. Eliminar el schema anterior del Schema Registry
+curl -X DELETE http://localhost:8081/subjects/sales-transactions-value
+curl -X DELETE "http://localhost:8081/subjects/sales-transactions-value?permanent=true"
+
+# 3. Borrar y recrear el topic (para eliminar mensajes con schema antiguo)
+docker exec broker-1 kafka-topics --bootstrap-server broker-1:29092 \
+  --delete --topic sales-transactions
+
+docker exec broker-1 kafka-topics --bootstrap-server broker-1:29092 \
+  --create --topic sales-transactions \
+  --partitions 3 --replication-factor 3 \
+  --config retention.ms=604800000 --config max.message.bytes=64000
+
+# 4. Recrear el conector con la nueva configuración
+curl -X POST http://localhost:8083/connectors \
+  -H "Content-Type: application/json" \
+  -d @0.tarea/connectors/source-mysql-sales_transactions.json
+
+# 5. Verificar que price ahora es double
+curl -s http://localhost:8081/subjects/sales-transactions-value/versions/latest | jq '.schema | fromjson | .fields[] | select(.name=="price")'
+```
+
+> **Lección aprendida:** cuando un dato atraviesa múltiples sistemas (Datagen → Kafka → MySQL → Kafka), cada sistema aplica su propio mapeo de tipos. Es fundamental verificar el schema resultante en cada etapa, especialmente cuando intervienen tipos como `DECIMAL` que no tienen una representación directa y legible en Avro.
 
 ---
 

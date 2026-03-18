@@ -1,8 +1,6 @@
 #!/bin/bash
 
 # Script para ejecutar las queries ksqlDB
-# Debe ejecutarse desde 0.tarea/
-# Reutiliza los ficheros .sql del directorio ksqldb/ 
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KSQL_URL="http://ksqldb-server:8088"
