@@ -725,13 +725,13 @@ Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado 
 ![S2 sales-summary](0.tarea/assets/screenshots/control_center/s2-messages-sales-summary.png)
 
 ### Messages. sales-transactions
-![S2 sales-summary](0.tarea/assets/screenshots/control_center/s3-messages-sales-transactions.png)
+![S2 sales-transactions](0.tarea/assets/screenshots/control_center/s3-messages-sales-transactions.png)
 
 ### Messages. sales-alerts
-![S2 sales-summary](0.tarea/assets/screenshots/control_center/s4-messages-sales-alerts.png)
+![S2 sales-alerts](0.tarea/assets/screenshots/control_center/s4-messages-sales-alerts.png)
 
 ### Messages. sales-telemetry
-![S2 sales-summary](0.tarea/assets/screenshots/control_center/s5-messages-sales-telemetry.png)
+![S2 sales-telemetry](0.tarea/assets/screenshots/control_center/s5-messages-sales-telemetry.png)
 
 </details>
 
@@ -748,13 +748,13 @@ Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado 
 <details>
 <summary><strong>Screen 4:</strong> KSQLDB</summary>
 
-### KSQLDB. sales-summary
+### KSQLDB. Streams
 ![S4 streams](0.tarea/assets/screenshots/control_center/s7-ksqldb-streams.png)
 
-### KSQLDB. sales-transactions
+### KSQLDB. Table
 ![S4 table](0.tarea/assets/screenshots/control_center/s8-ksqldb-table.png)
 
-### KSQLDB. sales-alerts
+### KSQLDB. Persistent Queries
 ![S4 persistent-queries](0.tarea/assets/screenshots/control_center/s9-ksqldb-persistent-queries.png)
 
 </details>
