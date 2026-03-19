@@ -1,4 +1,4 @@
-# FarmIA - Pipeline de Procesamiento en Tiempo Real con Apache Kafka
+# FarmIA - Kafka y Procesamiento en Tiempo Real
 
 ## Descripcion del Proyecto
 
@@ -29,7 +29,7 @@ cd 0.tarea
 Este script se encarga de dejar todo listo para empezar a trabajar. En concreto:
 - Levanta todos los contenedores Docker (brokers, Connect, ksqlDB, MySQL, MongoDB, etc.)
 - Crea la tabla `sales_transactions` en MySQL
-- Instala los plugins necesarios de los conectores (Datagen, JDBC, MongoDB, transform-common)
+- Instala los plugins necesarios de los conectores (Datagen, JDBC, MongoDB)
 - Copia el driver JDBC de MySQL al contenedor de Connect
 - Copia los schemas Avro al contenedor de Connect
 - Reinicia Connect para que cargue correctamente los plugins
@@ -70,17 +70,6 @@ Lanza los 5 conectores:
 cd 0.tarea
 ./ksqldb/run-ksqldb.sh
 ```
-
-O manualmente conectandose al CLI de ksqlDB:
-
-```bash
-docker exec -it ksqldb-cli ksql http://ksqldb-server:8088
-```
-
-Y ejecutar los ficheros SQL en orden:
-
-1. `ksqldb/01-sensor-alerts.sql` - Crea el stream de telemetria y el stream de alertas filtradas
-2. `ksqldb/02-sales-summary.sql` - Crea el stream de transacciones y la tabla de resumen por categoria
 
 ### Paso 5: Validar el pipeline completo
 
@@ -165,7 +154,7 @@ El fichero de configuración está en `connectors/source-datagen-sensor-telemetr
     "schema.filename": "/home/appuser/sensor-telemetry.avsc",
     "schema.keyfield": "sensor_id",
     "max.interval": 1000,
-    "iterations": 10000000,
+    "iterations": 100000,
     "tasks.max": "1",
     "value.converter": "io.confluent.connect.avro.AvroConverter",
     "value.converter.schema.registry.url": "http://schema-registry:8081",
@@ -183,7 +172,7 @@ El fichero de configuración está en `connectors/source-datagen-sensor-telemetr
 | `schema.filename` | `/home/appuser/sensor-telemetry.avsc` | Ruta al schema Avro dentro del contenedor. Este archivo se copia ahí durante la ejecución del script de setup. |
 | `schema.keyfield` | `sensor_id` | Campo del schema que se usa como clave del mensaje. Esto permite que los eventos del mismo sensor vayan a la misma partición (manteniendo el orden por sensor). |
 | `max.interval` | `1000` | Intervalo máximo, en milisegundos, entre mensajes. Con un valor de 1000, se genera aproximadamente 1 mensaje por segundo. |
-| `iterations` | `10000000` | Número total de mensajes (eventos) que se generarán. |
+| `iterations` | `100000` | Número total de mensajes (eventos) que se generarán. |
 | `tasks.max` | `1` | Número máximo de tareas del conector. |
 | `value.converter` | `io.confluent.connect.avro.AvroConverter` | Define cómo se serializa el valor del mensaje. En este caso, se utiliza Avro antes de enviarlo a Kafka. |
 | `value.converter.schema.registry.url` | `http://schema-registry:8081` | URL interna del Schema Registry dentro de la red de Docker, donde se registran y consultan los schemas Avro. |
@@ -211,8 +200,6 @@ En conjunto, este flujo (Datagen → `_transactions` → MySQL) simula un sistem
 El topic `_transactions` no se crea en el script `create-topics.sh` ni se menciona explícitamente en la descripción de la tarea. Aun así, es una pieza clave para que todo el pipeline funcione correctamente.
 
 **¿Quién lo crea?** Se crea automáticamente cuando el conector Datagen (`source-datagen-_transactions`) empieza a producir mensajes. Esto es posible porque Kafka tiene activada por defecto la opción `auto.create.topics.enable=true`. Es decir, si un producer escribe en un topic que aún no existe, Kafka lo crea en ese momento.
-
-Al crearse de esta forma, utiliza la configuración por defecto del broker (1 partición y replication factor 1).
 
 Este topic actúa simplemente como puente entre Datagen y el conector JDBC Sink que inserta los datos en MySQL. No se utiliza en ksqlDB ni forma parte de ningún otro procesamiento dentro del pipeline.
 
@@ -628,9 +615,9 @@ El fichero está en `0.tarea/connectors/sink-mongodb-sensor_alerts.json`:
 
 ## Problemas Detectados
 
-Durante las pruebas del pipeline apareció un problema importante relacionado con la visualización de los datos. Esto obligó a ajustar la configuración del conector JDBC Source. A continuación se describe qué pasaba, por qué ocurría y cómo se solucionó.
+Durante las pruebas del pipeline surgió un problema importante relacionado con la visualización de los datos. Para solucionarlo, fue necesario revisar y ajustar la configuración del conector JDBC Source. A continuación se comenta qué pasaba, por qué ocurría y cómo se solucionó.
 
-### Problema: campo `price` ilegible en el topic `sales-transactions`
+### Problema: el campo `price` aparece ilegible en el topic `sales-transactions`
 
 **Síntoma:** Al revisar los mensajes del topic `sales-transactions` en Confluent Control Center, el campo `price` mostraba caracteres extraños en lugar de valores numéricos:
 
@@ -640,9 +627,11 @@ Durante las pruebas del pipeline apareció un problema importante relacionado co
 {"transaction_id":"tx72133", ..., "price":"@>", ...}
 ```
 
-El **origen del problema**, es la incompatibilidad de tipos entre MySQL y el mapeo automático de Avro.
+**Origen del problema:**
 
-La clave está en que el JDBC Source Connector genera su propio esquema Avro a partir de la tabla en MySQL. Es decir, no reutiliza el esquema del Datagen (`transactions.avsc`). Por eso, aunque en Datagen el campo `price` se define como `float`, el conector JDBC lee un `DECIMAL(10,2)` desde MySQL y lo serializa como `bytes`.
+El problema viene de una incompatibilidad entre los tipos de datos de MySQL y cómo se mapean automáticamente a Avro.
+
+El punto clave es que el JDBC Source Connector genera su propio esquema Avro a partir de la tabla en MySQL. Es decir, no reutiliza el esquema del Datagen (`transactions.avsc`). Por eso, aunque en Datagen el campo `price` se define como `float`, el conector JDBC lee un `DECIMAL(10,2)` desde MySQL y lo serializa como `bytes`.
 
 
 **Solución aplicada: SMT `Cast$Value`**
@@ -656,62 +645,132 @@ Para solucionarlo, se añadió una nueva SMT al inicio de la cadena de transform
 
 Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado como bytes) a `float64` (equivalente a double en Avro) antes de que se serialice. De esta forma, los valores pasan a ser numéricos y se pueden leer correctamente.
 
----
+> **Fichero modificado:** `0.tarea/connectors/source-mysql-sales_transactions.json`
 
-## Comandos Útiles
+## Evidencias Visuales. Vía Shell
 
-```bash
-# ────── Docker ──────
-cd 1.environment
-docker compose up -d                              # Levantar todo
-docker compose down --remove-orphans              # Parar todo
-docker compose down -v                            # Reset completo (borra datos)
-docker compose logs connect -f                    # Logs de Connect en tiempo real
+> Las capturas se encuentran en la carpeta `0.tarea/assets/screenshots/shell/`. \
+> Haz clic en cada sección para expandir las evidencias.
 
-# ────── Topics ──────
-docker exec broker-1 kafka-topics --list --bootstrap-server broker-1:29092
-docker exec broker-1 kafka-topics --describe --topic sensor-telemetry --bootstrap-server broker-1:29092
+<details>
+<summary><strong>Shell 1:</strong> Setup</summary>
 
-# ────── Consumir mensajes ──────
-# Formato plano (Avro = bytes ilegibles)
-docker exec broker-1 kafka-console-consumer \
-  --bootstrap-server broker-1:29092 \
-  --topic sensor-telemetry \
-  --from-beginning --max-messages 5
+### Levantar el entorno y preparar la infraestructura
+![S1 Setup](0.tarea/assets/screenshots/shell/s1-setup-setting-up.png)
 
-# Formato deserializado (Avro → JSON legible)
-docker exec schema-registry kafka-avro-console-consumer \
-  --bootstrap-server broker-1:29092 \
-  --topic sensor-telemetry \
-  --from-beginning --max-messages 5 \
-  --property schema.registry.url=http://schema-registry:8081
+</details>
 
-# ────── Schema Registry ──────
-curl -s http://localhost:8081/subjects | jq
-curl -s http://localhost:8081/subjects/sensor-telemetry-value/versions/latest | jq
+<details>
+<summary><strong>Shell 2:</strong> Topics</summary>
 
-# ────── Kafka Connect ──────
-curl -s http://localhost:8083/connectors | jq
-curl -s http://localhost:8083/connectors/source-datagen-sensor-telemetry/status | jq
-curl -s http://localhost:8083/connectors/source-mysql-sales_transactions/status | jq
-curl -s http://localhost:8083/connectors/sink-mongodb-sensor_alerts/status | jq
+### Crear los topics de Kafka
+![S2 Topics](0.tarea/assets/screenshots/shell/s2-topics-create-topics.png)
 
-# ────── ksqlDB ──────
-docker exec -it ksqldb-cli ksql http://ksqldb-server:8088
+</details>
 
-# ────── MySQL ──────
-docker exec -it mysql mysql --user=root --password=password --database=db
+<details>
+<summary><strong>Shell 3:</strong> Connectors</summary>
 
-# ────── MongoDB ──────
-docker exec -it mongodb mongosh --username admin --password secret123 --authenticationDatabase admin
+### Lanzar los conectores de Kafka Connect
+![S3 Connectors](0.tarea/assets/screenshots/shell/s3-start_connectors-launch-connectors.png)
 
-# ────── URLs de servicios ──────
-# Control Center:   http://localhost:9021
-# Schema Registry:  http://localhost:8081
-# Kafka Connect:    http://localhost:8083
-# ksqlDB:           http://localhost:8088
-```
+</details>
+
+<details>
+<summary><strong>Shell 4:</strong> KSQLDB</summary>
+
+### Crear streams y tablas ksqlDB (ejecutar las queries ksqlDB)
+![S4 KSQLDB](0.tarea/assets/screenshots/shell/s4-run-ksqldb-create-streams-and-tables.png)
+
+</details>
+
+<details>
+<summary><strong>Shell 5:</strong> Validación</summary>
+
+### Topics creados y su configuración
+![S5 Topics](0.tarea/assets/screenshots/shell/s5-validate-topics-kafka.png)
+
+### Estado de los 5 conectores (todos deben estar RUNNING)
+![S5 Connectors](0.tarea/assets/screenshots/shell/s5-validate-state-connectors.png)
+
+### Mensajes en los topics de entrada y salida
+![S5 Messages](0.tarea/assets/screenshots/shell/s5-validate-topics-message.png)
+
+### Streams, tables y queries en ksqlDB
+![S5 KSQLDB](0.tarea/assets/screenshots/shell/s5-validate-ksqldb-streams-table.png)
+
+### Documentos insertados en MongoDB
+![S5 MongoDB](0.tarea/assets/screenshots/shell/s5-validate-mongodb-data.png)
+
+</details>
+
+## Evidencias Visuales. Vía Control Center Confluence y MongoDB Compass
+
+> Las capturas se encuentran en la carpeta `assets/screenshots/control_center/`. \
+> Haz clic en cada sección para expandir las evidencias.
+
+
+<details>
+<summary><strong>Screen 1:</strong> Topics</summary>
+
+### Topics
+![S1 Topics](0.tarea/assets/screenshots/control_center/s1-topics.png)
+
+</details>
+
+<details>
+<summary><strong>Screen 2:</strong> Messages</summary>
+
+### Messages. sales-summary
+![S2 sales-summary](0.tarea/assets/screenshots/control_center/s2-messages-sales-summary.png)
+
+### Messages. sales-transactions
+![S2 sales-summary](0.tarea/assets/screenshots/control_center/s3-messages-sales-transactions.png)
+
+### Messages. sales-alerts
+![S2 sales-summary](0.tarea/assets/screenshots/control_center/s4-messages-sales-alerts.png)
+
+### Messages. sales-telemetry
+![S2 sales-summary](0.tarea/assets/screenshots/control_center/s5-messages-sales-telemetry.png)
+
+</details>
 
 
 
+<details>
+<summary><strong>Screen 3:</strong> Connectors</summary>
 
+### Connectors
+![S3 Connectors](0.tarea/assets/screenshots/control_center/s6-connectors.png)
+
+</details>
+
+<details>
+<summary><strong>Screen 4:</strong> KSQLDB</summary>
+
+### KSQLDB. sales-summary
+![S4 streams](0.tarea/assets/screenshots/control_center/s7-ksqldb-streams.png)
+
+### KSQLDB. sales-transactions
+![S4 table](0.tarea/assets/screenshots/control_center/s8-ksqldb-table.png)
+
+### KSQLDB. sales-alerts
+![S4 persistent-queries](0.tarea/assets/screenshots/control_center/s9-ksqldb-persistent-queries.png)
+
+</details>
+
+<details>
+<summary><strong>Screen 5:</strong> Consumers</summary>
+
+### Consumer Group
+![S5 consumer](0.tarea/assets/screenshots/control_center/s10-consumers-consumer_group.png)
+
+</details>
+
+<details>
+<summary><strong>Screen 6:</strong> MongoDB</summary>
+
+### MongoDB. sensor_alerts
+![S6 sensor-alerts](0.tarea/assets/screenshots/compass/s1-mongodb-sensor-alerts.png)
+
+</details>

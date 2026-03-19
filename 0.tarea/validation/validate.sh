@@ -9,7 +9,7 @@ echo "========================================"
 echo ""
 echo "1. Verificando topics de Kafka..."
 echo "----------------------------------------"
-docker exec broker-1 kafka-topics --list --bootstrap-server broker-1:29092
+docker exec broker-1 kafka-topics --list --bootstrap-server broker-1:29092 | grep -v "^_"
 
 echo ""
 echo "2. Detalle de los topics del proyecto..."
@@ -36,42 +36,54 @@ done
 echo ""
 echo "4. Verificando mensajes en sensor-telemetry (ultimos 3)..."
 echo "----------------------------------------"
-docker exec broker-1 kafka-console-consumer \
-  --bootstrap-server broker-1:29092 \
-  --topic sensor-telemetry \
-  --from-beginning \
-  --max-messages 3 \
-  --timeout-ms 10000 2>/dev/null || echo "No se pudieron leer mensajes"
+docker exec schema-registry bash -c \
+  "kafka-avro-console-consumer \
+    --bootstrap-server broker-1:29092 \
+    --topic sensor-telemetry \
+    --from-beginning \
+    --max-messages 3 \
+    --timeout-ms 10000 \
+    --property schema.registry.url=http://schema-registry:8081 \
+    2>&1 | grep '^\{'" || echo "No se pudieron leer mensajes"
 
 echo ""
 echo "5. Verificando mensajes en sales-transactions (ultimos 3)..."
 echo "----------------------------------------"
-docker exec broker-1 kafka-console-consumer \
-  --bootstrap-server broker-1:29092 \
-  --topic sales-transactions \
-  --from-beginning \
-  --max-messages 3 \
-  --timeout-ms 10000 2>/dev/null || echo "No se pudieron leer mensajes"
+docker exec schema-registry bash -c \
+  "kafka-avro-console-consumer \
+    --bootstrap-server broker-1:29092 \
+    --topic sales-transactions \
+    --from-beginning \
+    --max-messages 3 \
+    --timeout-ms 10000 \
+    --property schema.registry.url=http://schema-registry:8081 \
+    2>&1 | grep '^\{'" || echo "No se pudieron leer mensajes"
 
 echo ""
 echo "6. Verificando mensajes en sensor-alerts (ultimos 3)..."
 echo "----------------------------------------"
-docker exec broker-1 kafka-console-consumer \
-  --bootstrap-server broker-1:29092 \
-  --topic sensor-alerts \
-  --from-beginning \
-  --max-messages 3 \
-  --timeout-ms 10000 2>/dev/null || echo "No se pudieron leer mensajes"
+docker exec schema-registry bash -c \
+  "kafka-avro-console-consumer \
+    --bootstrap-server broker-1:29092 \
+    --topic sensor-alerts \
+    --from-beginning \
+    --max-messages 3 \
+    --timeout-ms 10000 \
+    --property schema.registry.url=http://schema-registry:8081 \
+    2>&1 | grep '^\{'" || echo "No se pudieron leer mensajes"
 
 echo ""
 echo "7. Verificando mensajes en sales-summary (ultimos 3)..."
 echo "----------------------------------------"
-docker exec broker-1 kafka-console-consumer \
-  --bootstrap-server broker-1:29092 \
-  --topic sales-summary \
-  --from-beginning \
-  --max-messages 3 \
-  --timeout-ms 10000 2>/dev/null || echo "No se pudieron leer mensajes"
+docker exec schema-registry bash -c \
+  "kafka-avro-console-consumer \
+    --bootstrap-server broker-1:29092 \
+    --topic sales-summary \
+    --from-beginning \
+    --max-messages 3 \
+    --timeout-ms 10000 \
+    --property schema.registry.url=http://schema-registry:8081 \
+    2>&1 | grep '^\{'" || echo "No se pudieron leer mensajes"
 
 echo ""
 echo "8. Verificando queries ksqlDB..."
@@ -79,7 +91,6 @@ echo "----------------------------------------"
 docker exec -i ksqldb-cli ksql http://ksqldb-server:8088 <<'EOF'
 SHOW STREAMS;
 SHOW TABLES;
-SHOW QUERIES;
 EOF
 
 echo ""
