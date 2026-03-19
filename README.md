@@ -647,7 +647,7 @@ Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado 
 
 > **Fichero modificado:** `0.tarea/connectors/source-mysql-sales_transactions.json`
 
-## Evidencias Visuales. Vía Shell
+## Evidencias Visuales. Ejecución Completa del Pipeline - Vía Shell
 
 > Las capturas se encuentran en la carpeta `0.tarea/assets/screenshots/shell/`. \
 > Haz clic en cada sección para expandir las evidencias.
@@ -704,7 +704,7 @@ Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado 
 
 </details>
 
-## Evidencias Visuales. Vía Control Center Confluence y MongoDB Compass
+## Evidencias Visuales. Monitorizar Servicios de Kafka - Vía Control Center Confluence 
 
 > Las capturas se encuentran en la carpeta `assets/screenshots/control_center/`. \
 > Haz clic en cada sección para expandir las evidencias.
@@ -768,7 +768,7 @@ Esta transformación convierte el campo `price` de tipo `DECIMAL` (representado 
 </details>
 
 <details>
-<summary><strong>Screen 6:</strong> MongoDB</summary>
+<summary><strong>Screen 6:</strong> MongoDB Compass</summary>
 
 ### MongoDB. sensor_alerts
 ![S6 sensor-alerts](0.tarea/assets/screenshots/compass/s1-mongodb-sensor-alerts.png)
